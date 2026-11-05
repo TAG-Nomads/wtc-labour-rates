@@ -421,9 +421,41 @@ function collectRoster() {
 // daily ordinary-hours cap and the hours after which a meal break is required.
 const SHIFT_AWARDS = { MA000004: { cap: 9, meal: 5, retail: true }, MA000009: { cap: 12, meal: 6 }, MA000084: { cap: 8, meal: 5 } };
 const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-let SHIFTS = [];
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// One entry per staff roster: { name, count, otherHours, shifts: [{day,start,lengthHours,breakMins}], b: builder state }.
+// `count` = how many people work exactly this roster (each is costed separately, then multiplied).
+let STAFF = [];
 let SHIFT_RESULT = null;
-let BREAK_TOUCHED = false;
+
+const timeToMin = (t) => {
+  const [h, m] = String(t || "").split(":").map(Number);
+  return isNaN(h) || isNaN(m) ? null : h * 60 + m;
+};
+const minToTime = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+// Finish time from start + length; a finish earlier than the start means the shift runs past midnight.
+const finishFrom = (start, lengthHours) => {
+  const s = timeToMin(start);
+  return s == null ? "" : minToTime((s + Math.round(lengthHours * 60)) % 1440);
+};
+const lengthFrom = (start, finish) => {
+  const s = timeToMin(start);
+  const f = timeToMin(finish);
+  if (s == null || f == null || s === f) return 0;
+  return ((f - s + 1440) % 1440) / 60;
+};
+const mealThreshold = () => (SELECTED_AWARD && SHIFT_AWARDS[SELECTED_AWARD.award_code] ? SHIFT_AWARDS[SELECTED_AWARD.award_code].meal : 5);
+const suggestBreak = (lengthHours) => (lengthHours > mealThreshold() ? 30 : 0);
+
+function newStaff(n) {
+  return {
+    name: `Staff ${n}`,
+    count: 1,
+    otherHours: 0,
+    shifts: [],
+    b: { days: [], start: "09:00", finish: "17:00", lengthHours: 8, breakMins: suggestBreak(8), breakTouched: false },
+  };
+}
 
 const entryMode = () => document.querySelector('input[name="entryMode"]:checked').value;
 const shiftModeActive = () => !$("modeSection").hidden && entryMode() === "shifts";
@@ -464,15 +496,13 @@ function invalidateShiftResult() {
 }
 
 function renderDayChecks() {
-  const boxes = (prefix) => DAY_SHORT.map((d, i) => `<label><input type="checkbox" id="${prefix}${i}"> ${d}</label>`).join("");
-  $("shiftDays").innerHTML = boxes("dayChk");
-  $("phDays").innerHTML = boxes("phChk");
+  $("phDays").innerHTML = DAY_SHORT.map((d, i) => `<label><input type="checkbox" id="phChk${i}"> ${d}</label>`).join("");
   document.querySelectorAll('[id^="phChk"]').forEach((c) => c.addEventListener("change", invalidateShiftResult));
 }
 
 function finishText(s) {
-  const [h, m] = s.start.split(":").map(Number);
-  const total = h * 60 + m + Math.round(s.lengthHours * 60);
+  const startMin = timeToMin(s.start) || 0;
+  const total = startMin + Math.round(s.lengthHours * 60);
   const dayOffset = Math.floor(total / 1440);
   const mm = total % 1440;
   const hh = Math.floor(mm / 60);
@@ -480,56 +510,63 @@ function finishText(s) {
   return dayOffset ? `${text} (${DAY_SHORT[(s.day + dayOffset) % 7]})` : text;
 }
 
-function renderShiftList() {
-  if (!SHIFTS.length) {
-    $("shiftList").innerHTML = `<p class="small muted">No shifts added yet.</p>`;
-    return;
-  }
-  $("shiftList").innerHTML = `<table>
-    <thead><tr><th>Day</th><th>Start</th><th class="num">Length (h)</th><th>Finish</th><th class="num">Unpaid break (min)</th><th></th></tr></thead>
+function renderShiftRows(st, si) {
+  if (!st.shifts.length) return `<p class="small muted">No shifts added yet for ${esc(st.name)}.</p>`;
+  return `<table>
+    <thead><tr><th>Day</th><th>Start</th><th>Finish</th><th class="num">Length (h)</th><th class="num">Unpaid break (min)</th><th></th></tr></thead>
     <tbody>
-      ${SHIFTS.map(
-        (s, i) => `<tr>
-          <td><select class="shift-field" data-i="${i}" data-k="day">${DAY_SHORT.map((d, di) => `<option value="${di}" ${s.day === di ? "selected" : ""}>${d}</option>`).join("")}</select></td>
-          <td><input type="time" class="shift-field" data-i="${i}" data-k="start" value="${s.start}"></td>
-          <td class="num"><input type="number" class="shift-field" data-i="${i}" data-k="lengthHours" step="0.25" min="0.25" max="24" value="${s.lengthHours}" style="text-align:right"></td>
-          <td class="muted">${finishText(s)}</td>
-          <td class="num"><input type="number" class="shift-field" data-i="${i}" data-k="breakMins" step="5" min="0" value="${s.breakMins}" style="text-align:right"></td>
-          <td><button type="button" class="link shift-remove" data-i="${i}">Remove</button></td>
+      ${st.shifts
+        .map(
+          (s, i) => `<tr>
+          <td><select class="shift-field" data-si="${si}" data-i="${i}" data-k="day">${DAY_SHORT.map((d, di) => `<option value="${di}" ${s.day === di ? "selected" : ""}>${d}</option>`).join("")}</select></td>
+          <td><input type="time" class="shift-field" data-si="${si}" data-i="${i}" data-k="start" value="${s.start}"></td>
+          <td><input type="time" class="shift-field" data-si="${si}" data-i="${i}" data-k="finish" value="${finishFrom(s.start, s.lengthHours)}"> <span class="muted small">${finishText(s).includes("(") ? finishText(s).replace(/^.*\(/, "(") : ""}</span></td>
+          <td class="num"><input type="number" class="shift-field" data-si="${si}" data-i="${i}" data-k="lengthHours" step="0.25" min="0.25" max="24" value="${s.lengthHours}" style="text-align:right"></td>
+          <td class="num"><input type="number" class="shift-field" data-si="${si}" data-i="${i}" data-k="breakMins" step="5" min="0" value="${s.breakMins}" style="text-align:right"></td>
+          <td><button type="button" class="link shift-remove" data-si="${si}" data-i="${i}">Remove</button></td>
         </tr>`
-      ).join("")}
+        )
+        .join("")}
     </tbody></table>`;
-  document.querySelectorAll(".shift-field").forEach((el) => {
-    el.addEventListener("change", () => {
-      const s = SHIFTS[Number(el.dataset.i)];
-      const k = el.dataset.k;
-      s[k] = k === "day" ? Number(el.value) : k === "start" ? el.value : parseFloat(el.value) || 0;
-      invalidateShiftResult();
-      renderShiftList();
-    });
-  });
-  document.querySelectorAll(".shift-remove").forEach((el) => {
-    el.addEventListener("click", () => {
-      SHIFTS.splice(Number(el.dataset.i), 1);
-      invalidateShiftResult();
-      renderShiftList();
-    });
-  });
 }
 
-function addShifts() {
-  const days = DAY_SHORT.map((_, i) => i).filter((i) => $(`dayChk${i}`).checked);
-  const start = $("shiftStart").value;
-  const lengthHours = parseFloat($("shiftLength").value);
-  const breakMins = parseInt($("shiftBreak").value, 10) || 0;
-  if (!days.length) return ($("shiftError").innerHTML = `<div class="notice error">Tick at least one day for the shift.</div>`);
-  if (!start) return ($("shiftError").innerHTML = `<div class="notice error">Enter a start time.</div>`);
-  if (!(lengthHours > 0 && lengthHours <= 24)) return ($("shiftError").innerHTML = `<div class="notice error">Shift length must be between 0 and 24 hours.</div>`);
-  $("shiftError").innerHTML = "";
-  for (const day of days) SHIFTS.push({ day, start, lengthHours, breakMins });
-  SHIFTS.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
+function renderStaffBlocks() {
+  $("staffBlocks").innerHTML = STAFF.map((st, si) => {
+    const b = st.b;
+    return `<div class="card staff-block" style="margin-bottom:14px">
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label>Roster name</label><input type="text" class="staff-name" data-si="${si}" value="${esc(st.name)}" maxlength="60"></div>
+        <div class="field" style="flex:0 0 190px"><label>Number of staff on this roster</label><input type="number" class="staff-count" data-si="${si}" min="1" max="200" step="1" value="${st.count}"></div>
+        <div class="field" style="flex:0 0 190px"><label>Hours already worked this week (each)</label><input type="number" class="staff-other" data-si="${si}" min="0" step="0.25" value="${st.otherHours || 0}"></div>
+        ${STAFF.length > 1 ? `<div class="field" style="flex:0 0 auto"><button type="button" class="link staff-remove" data-si="${si}">Remove roster</button></div>` : ""}
+      </div>
+      <label class="mt-8">Add shifts — tick the days that share the same times</label>
+      <div class="day-checks">${DAY_SHORT.map((d, i) => `<label><input type="checkbox" class="b-day" data-si="${si}" data-d="${i}" ${b.days.includes(i) ? "checked" : ""}> ${d}</label>`).join("")}</div>
+      <div class="row" style="align-items:flex-end">
+        <div class="field" style="flex:0 0 130px"><label>Start</label><input type="time" class="b-start" data-si="${si}" value="${b.start}"></div>
+        <div class="field" style="flex:0 0 130px"><label>Finish</label><input type="time" class="b-finish" data-si="${si}" value="${b.finish}"></div>
+        <div class="field" style="flex:0 0 120px"><label>or length (h)</label><input type="number" class="b-length" data-si="${si}" step="0.25" min="0.25" max="24" value="${b.lengthHours}"></div>
+        <div class="field" style="flex:0 0 150px"><label>Unpaid break (min)</label><input type="number" class="b-break" data-si="${si}" step="5" min="0" value="${b.breakMins}"></div>
+        <div class="field" style="flex:0 0 auto"><button type="button" class="b-add" data-si="${si}">Add shift(s)</button></div>
+      </div>
+      <div class="b-err" id="bErr${si}"></div>
+      <div class="shift-rows">${renderShiftRows(st, si)}</div>
+    </div>`;
+  }).join("");
+}
+
+function addShifts(si) {
+  const st = STAFF[si];
+  const b = st.b;
+  const err = (msg) => ($(`bErr${si}`).innerHTML = `<div class="notice error">${msg}</div>`);
+  if (!b.days.length) return err("Tick at least one day for the shift.");
+  if (!b.start) return err("Enter a start time.");
+  if (!(b.lengthHours > 0 && b.lengthHours <= 24)) return err("Enter a finish time (or a length between 0 and 24 hours).");
+  for (const day of b.days) st.shifts.push({ day, start: b.start, lengthHours: b.lengthHours, breakMins: b.breakMins });
+  st.shifts.sort((x, y) => x.day - y.day || x.start.localeCompare(y.start));
+  b.days = [];
   invalidateShiftResult();
-  renderShiftList();
+  renderStaffBlocks();
 }
 
 function shiftPayloadParts() {
@@ -542,9 +579,13 @@ function shiftPayloadParts() {
     });
   }
   return {
-    shifts: SHIFTS.map((s) => ({ day: s.day, start: s.start, lengthHours: s.lengthHours, breakMins: s.breakMins })),
+    staff: STAFF.map((st, i) => ({
+      name: st.name.trim() || `Staff ${i + 1}`,
+      count: Math.max(1, Math.round(Number(st.count) || 1)),
+      otherHoursThisWeek: Number(st.otherHours) || 0,
+      shifts: st.shifts.map((s) => ({ day: s.day, start: s.start, lengthHours: s.lengthHours, breakMins: s.breakMins })),
+    })),
     publicHolidays: DAY_SHORT.map((_, i) => i).filter((i) => $(`phChk${i}`).checked),
-    otherHoursThisWeek: parseFloat($("otherHours").value) || 0,
     shiftOptions: {
       dailyCapHours: parseFloat($("dailyCap").value) || undefined,
       shiftworker: $("optShiftworker").checked,
@@ -556,8 +597,9 @@ function shiftPayloadParts() {
 
 async function workOutHours() {
   $("shiftError").innerHTML = "";
-  if (!SHIFTS.length) {
-    $("shiftError").innerHTML = `<div class="notice error">Add at least one shift first.</div>`;
+  const empty = STAFF.find((st) => !st.shifts.length);
+  if (empty) {
+    $("shiftError").innerHTML = `<div class="notice error">Add at least one shift to "${esc(empty.name)}" (or remove that roster).</div>`;
     return false;
   }
   const parts = shiftPayloadParts();
@@ -569,7 +611,7 @@ async function workOutHours() {
     });
   } catch (e) {
     SHIFT_RESULT = null;
-    $("shiftResult").innerHTML = `<div class="notice error">${e.message}</div>`;
+    $("shiftResult").innerHTML = `<div class="notice error">${esc(e.message)}</div>`;
     renderAllowances(collectAllowancePriorState());
     return false;
   }
@@ -580,26 +622,32 @@ async function workOutHours() {
 
 function renderShiftResult() {
   const r = SHIFT_RESULT;
-  const splitText = (d) => d.segments.map((s) => `${s.hours}h ${s.label}${s.isOvertime ? ' <span class="pill" style="color:var(--amber);border-color:var(--amber)">OT</span>' : ""}`).join(" · ");
+  const splitText = (d) => d.segments.map((s) => `${s.hours}h ${esc(s.label)}${s.isOvertime ? ' <span class="pill" style="color:var(--amber);border-color:var(--amber)">OT</span>' : ""}`).join(" · ");
+  const multi = r.staffDetails.length > 1 || r.staffDetails.some((s) => s.count > 1);
   $("shiftResult").innerHTML = `
-    ${r.warnings.length ? `<div class="notice warn"><strong>Check before quoting:</strong><ul style="margin:6px 0 0 18px;padding:0">${r.warnings.map((w) => `<li>${w}</li>`).join("")}</ul></div>` : ""}
+    ${r.warnings.length ? `<div class="notice warn"><strong>Check before quoting:</strong><ul style="margin:6px 0 0 18px;padding:0">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
     <h3 class="mt-8" style="margin-bottom:8px">How each shift splits</h3>
-    <table>
-      <thead><tr><th>Shift</th><th class="num">Paid hours</th><th>Split under the award</th></tr></thead>
-      <tbody>${r.shiftDetails.map((d) => `<tr><td>${d.dayName} ${d.start} – ${d.finish}${d.breakMins ? ` <span class="muted small">(${d.breakMins} min unpaid break)</span>` : ""}</td><td class="num">${d.workedHours}</td><td class="small">${splitText(d)}</td></tr>`).join("")}</tbody>
-    </table>
-    <h3 class="mt-8" style="margin-bottom:8px">Hours by pay category <span class="muted small">— you can adjust these; adjustments are recorded on the quote</span></h3>
+    ${r.staffDetails
+      .map(
+        (sd) => `<p class="small" style="margin:10px 0 4px"><strong>${esc(sd.name)}</strong>${sd.count > 1 ? ` <span class="muted">× ${sd.count} staff</span>` : ""}</p>
+      <table>
+        <thead><tr><th>Shift</th><th class="num">Paid hours</th><th>Split under the award</th></tr></thead>
+        <tbody>${sd.shifts.map((d) => `<tr><td>${esc(d.dayName)} ${esc(d.start)} – ${esc(d.finish)}${d.breakMins ? ` <span class="muted small">(${d.breakMins} min unpaid break)</span>` : ""}</td><td class="num">${d.workedHours}</td><td class="small">${splitText(d)}</td></tr>`).join("")}</tbody>
+      </table>`
+      )
+      .join("")}
+    <h3 class="mt-8" style="margin-bottom:8px">Hours by pay category${multi ? " — total across all staff" : ""} <span class="muted small">— you can adjust these; adjustments are recorded on the quote</span></h3>
     <table>
       <thead><tr><th>Category</th><th>Clause</th><th class="num">Award rate</th><th class="num" style="width:110px">Hours</th></tr></thead>
       <tbody>${r.lines
         .map(
-          (l) => `<tr><td>${l.label}${otBadge(l.isOvertime)}</td><td class="muted small">${l.clauses}</td><td class="num">${money(l.rate)}</td>
-          <td class="num"><input type="number" min="0" step="0.25" class="shift-line-hours" data-label="${l.label}" value="${l.hours}" style="text-align:right"></td></tr>`
+          (l) => `<tr><td>${esc(l.label)}${otBadge(l.isOvertime)}</td><td class="muted small">${esc(l.clauses)}</td><td class="num">${money(l.rate)}</td>
+          <td class="num"><input type="number" min="0" step="0.25" class="shift-line-hours" data-label="${esc(l.label)}" value="${l.hours}" style="text-align:right"></td></tr>`
         )
         .join("")}</tbody>
     </table>
-    ${r.addOns.length ? `<p class="small muted">Added automatically from the shifts: ${r.addOns.map((a) => `${a.quantity}h ${a.allowance}`).join("; ")}.</p>` : ""}
-    <details class="small muted" style="margin-top:6px"><summary>Assumptions used</summary><ul style="margin:6px 0 0 18px;padding:0">${r.assumptions.map((a) => `<li>${a}</li>`).join("")}</ul></details>
+    ${r.addOns.length ? `<p class="small muted">Added automatically from the shifts: ${r.addOns.map((a) => `${a.quantity}h ${esc(a.allowance)}`).join("; ")}.</p>` : ""}
+    <details class="small muted" style="margin-top:6px"><summary>Assumptions used</summary><ul style="margin:6px 0 0 18px;padding:0">${r.assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></details>
   `;
   document.querySelectorAll(".shift-line-hours").forEach((inp) => {
     inp.addEventListener("input", () => {
@@ -611,22 +659,105 @@ function renderShiftResult() {
 }
 
 function wireShiftEvents() {
+  if (!STAFF.length) STAFF.push(newStaff(1));
   renderDayChecks();
-  renderShiftList();
+  renderStaffBlocks();
   document.querySelectorAll('input[name="entryMode"]').forEach((r) =>
     r.addEventListener("change", () => {
       updateModeUI();
       invalidateShiftResult();
     })
   );
-  $("addShiftsBtn").addEventListener("click", addShifts);
+  $("addStaffBtn").addEventListener("click", () => {
+    STAFF.push(newStaff(STAFF.length + 1));
+    invalidateShiftResult();
+    renderStaffBlocks();
+  });
   $("workOutBtn").addEventListener("click", workOutHours);
-  ["otherHours", "dailyCap", "optShiftworker", "optLateTrading"].forEach((id) => $(id).addEventListener("change", invalidateShiftResult));
-  // Suggest a 30-minute unpaid meal break for longer shifts until the user sets one themselves.
-  $("shiftBreak").addEventListener("input", () => (BREAK_TOUCHED = true));
-  $("shiftLength").addEventListener("input", () => {
-    if (BREAK_TOUCHED || !SELECTED_AWARD || !SHIFT_AWARDS[SELECTED_AWARD.award_code]) return;
-    $("shiftBreak").value = parseFloat($("shiftLength").value) > SHIFT_AWARDS[SELECTED_AWARD.award_code].meal ? 30 : 0;
+  ["dailyCap", "optShiftworker", "optLateTrading"].forEach((id) => $(id).addEventListener("change", invalidateShiftResult));
+
+  const blocks = $("staffBlocks");
+  const staffOf = (el) => STAFF[Number(el.dataset.si)];
+
+  // Typing in a builder or header field only updates state (no re-render, so focus is kept).
+  blocks.addEventListener("input", (e) => {
+    const el = e.target;
+    const st = el.dataset.si !== undefined ? staffOf(el) : null;
+    if (!st) return;
+    const b = st.b;
+    const si = el.dataset.si;
+    const q = (cls) => blocks.querySelector(`.${cls}[data-si="${si}"]`);
+    if (el.classList.contains("b-start") || el.classList.contains("b-finish")) {
+      if (el.classList.contains("b-start")) b.start = el.value;
+      else b.finish = el.value;
+      b.lengthHours = lengthFrom(b.start, b.finish);
+      q("b-length").value = b.lengthHours || "";
+    } else if (el.classList.contains("b-length")) {
+      b.lengthHours = parseFloat(el.value) || 0;
+      b.finish = finishFrom(b.start, b.lengthHours);
+      q("b-finish").value = b.finish;
+    } else if (el.classList.contains("b-break")) {
+      b.breakMins = parseInt(el.value, 10) || 0;
+      b.breakTouched = true;
+      return;
+    } else {
+      return;
+    }
+    // Suggest a 30-minute unpaid meal break for longer shifts until the user sets one themselves.
+    if (!b.breakTouched) {
+      b.breakMins = suggestBreak(b.lengthHours);
+      q("b-break").value = b.breakMins;
+    }
+  });
+
+  blocks.addEventListener("change", (e) => {
+    const el = e.target;
+    if (el.dataset.si === undefined) return;
+    const st = staffOf(el);
+    if (!st) return;
+    if (el.classList.contains("staff-name")) {
+      st.name = el.value;
+      invalidateShiftResult();
+    } else if (el.classList.contains("staff-count")) {
+      st.count = Math.max(1, Math.min(200, Math.round(parseFloat(el.value) || 1)));
+      el.value = st.count;
+      invalidateShiftResult();
+    } else if (el.classList.contains("staff-other")) {
+      st.otherHours = Math.max(0, parseFloat(el.value) || 0);
+      invalidateShiftResult();
+    } else if (el.classList.contains("b-day")) {
+      const d = Number(el.dataset.d);
+      st.b.days = el.checked ? [...new Set([...st.b.days, d])].sort() : st.b.days.filter((x) => x !== d);
+    } else if (el.classList.contains("shift-field")) {
+      const s = st.shifts[Number(el.dataset.i)];
+      const k = el.dataset.k;
+      if (k === "day") s.day = Number(el.value);
+      else if (k === "start") s.start = el.value || s.start;
+      else if (k === "finish") s.lengthHours = lengthFrom(s.start, el.value) || s.lengthHours;
+      else if (k === "lengthHours") s.lengthHours = Math.min(24, parseFloat(el.value) || 0) || s.lengthHours;
+      else if (k === "breakMins") s.breakMins = parseInt(el.value, 10) || 0;
+      st.shifts.sort((x, y) => x.day - y.day || x.start.localeCompare(y.start));
+      invalidateShiftResult();
+      renderStaffBlocks();
+    }
+  });
+
+  blocks.addEventListener("click", (e) => {
+    const el = e.target.closest("button");
+    if (!el || el.dataset.si === undefined) return;
+    const st = staffOf(el);
+    if (!st) return;
+    if (el.classList.contains("b-add")) {
+      addShifts(Number(el.dataset.si));
+    } else if (el.classList.contains("shift-remove")) {
+      st.shifts.splice(Number(el.dataset.i), 1);
+      invalidateShiftResult();
+      renderStaffBlocks();
+    } else if (el.classList.contains("staff-remove")) {
+      STAFF.splice(Number(el.dataset.si), 1);
+      invalidateShiftResult();
+      renderStaffBlocks();
+    }
   });
 }
 

@@ -33,10 +33,10 @@ const MAP = {
       "Public holiday": "Public holiday",
     },
     "Casual adult shiftworkers—shiftwork and penalty rates": {
-      "Other than baking production employees (OBPE): Monday to Friday - Starting at or after 6.00 pm and before 5.00 am": "Shiftwork - Monday to Friday",
-      "All shiftworkers: Saturday - OBPE and BPE": "Shiftwork - Saturday",
-      "All shiftworkers: Sunday - OBPE and BPE": "Shiftwork - Sunday",
-      "All shiftworkers: Public holiday - all hours within shift": "Shiftwork - Public holiday",
+      "Other than baking production employees (OBPE): Monday to Friday - Starting at or after 6.00 pm and before 5.00 am": "Ordinary hours - Shiftwork, Monday to Friday",
+      "All shiftworkers: Saturday - OBPE and BPE": "Ordinary hours - Shiftwork, Saturday",
+      "All shiftworkers: Sunday - OBPE and BPE": "Ordinary hours - Shiftwork, Sunday",
+      "All shiftworkers: Public holiday - all hours within shift": "Ordinary hours - Shiftwork, Public holiday",
     },
   },
   MA000009: {
@@ -61,9 +61,9 @@ const MAP = {
       "Public Holiday": "Public holiday",
     },
     "Casual employees—shiftworkers—penalty rates": {
-      "Early Morning": "Early morning shift",
-      Afternoon: "Afternoon shift",
-      Night: "Night shift",
+      "Early Morning": "Ordinary hours - Early morning shift",
+      Afternoon: "Ordinary hours - Afternoon shift",
+      Night: "Ordinary hours - Night shift",
     },
   },
 };
@@ -118,7 +118,7 @@ const sh = (day, start, lengthHours, breakMins = 0) => ({ day, start, lengthHour
 }
 { // Retail as a shiftworker: flat 155% weekday, Saturday 175% after midnight.
   const r = costShifts({ awardCode: "MA000004", baseCents: 2781, shifts: [sh(FRI, "18:00", 8, 30)], options: { shiftworker: true } });
-  check("Retail shiftworker Fri 6pm 8h: 6h weekday + 1.5h? (midnight splits)", hrs(r, "Shiftwork - Monday to Friday") === 5.5 && hrs(r, "Shiftwork - Saturday") === 2, JSON.stringify(r.lines.map((l) => [l.label, l.hours])));
+  check("Retail shiftworker Fri 6pm 8h: 6h weekday + 1.5h? (midnight splits)", hrs(r, "Ordinary hours - Shiftwork, Monday to Friday") === 5.5 && hrs(r, "Ordinary hours - Shiftwork, Saturday") === 2, JSON.stringify(r.lines.map((l) => [l.label, l.hours])));
 }
 { // Retail min engagement
   const r = costShifts({ awardCode: "MA000004", baseCents: 2781, shifts: [sh(5, "10:00", 2)] });
@@ -149,7 +149,7 @@ const sh = (day, start, lengthHours, breakMins = 0) => ({ day, start, lengthHour
   const day = costShifts({ awardCode: "MA000084", baseCents: 2400, shifts: [sh(0, "08:00", 8.5, 30)] });
   check("Storage day worker 8h: all ordinary", hrs(day, "Ordinary hours") === 8 && day.lines.length === 1);
   const aft = costShifts({ awardCode: "MA000084", baseCents: 2400, shifts: [sh(1, "15:00", 9, 0)] });
-  check("Storage afternoon shift 9h: 8h afternoon + 1h overtime first 2h", hrs(aft, "Afternoon shift") === 8 && hrs(aft, "Overtime - first 2 hours") === 1);
+  check("Storage afternoon shift 9h: 8h afternoon + 1h overtime first 2h", hrs(aft, "Ordinary hours - Afternoon shift") === 8 && hrs(aft, "Overtime - first 2 hours") === 1);
   let threw = false;
   try {
     costShifts({ awardCode: "MA000084", baseCents: 2400, shifts: [sh(2, "10:00", 8, 30)] });

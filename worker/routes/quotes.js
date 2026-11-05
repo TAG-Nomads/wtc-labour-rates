@@ -23,20 +23,81 @@ async function getBaseCents(env, basePayRateId) {
   return Math.round(c.calculated_rate * 100);
 }
 
+const hasShiftInput = (body) =>
+  (Array.isArray(body.staff) && body.staff.length > 0) || (Array.isArray(body.shifts) && body.shifts.length > 0);
+
 // Runs the shift engine for a request body. Throws Error(message) on bad input;
 // callers turn that into a 400.
 async function runShiftEngine(env, body) {
   if (!isSupported(body.awardCode)) throw new Error("The shift calculator doesn't cover this award yet - use by-category entry");
   if (!body.isCasual) throw new Error("The shift calculator is casual-only - tick Casual placement or use by-category entry");
   const baseCents = await getBaseCents(env, body.basePayRateId);
-  return costShifts({
-    awardCode: body.awardCode,
-    baseCents,
-    shifts: body.shifts,
-    publicHolidays: body.publicHolidays,
-    otherHours: body.otherHoursThisWeek,
-    options: body.shiftOptions || {},
+
+  // body.staff = [{ name, count, otherHoursThisWeek, shifts }]; a bare body.shifts
+  // is treated as a single staff member. Each roster is costed on its own (weekly
+  // overtime accrues per person) and its hours are multiplied by `count`.
+  const staffList =
+    Array.isArray(body.staff) && body.staff.length
+      ? body.staff
+      : [{ name: "Staff 1", count: 1, shifts: body.shifts, otherHoursThisWeek: body.otherHoursThisWeek }];
+  const multi = staffList.length > 1;
+
+  const hoursByLabel = new Map();
+  const addOnTotals = new Map();
+  const warnings = [];
+  const assumptions = new Set();
+  const staffDetails = [];
+  let table = null;
+
+  staffList.forEach((st, i) => {
+    const name = String(st.name || "").trim().slice(0, 60) || `Staff ${i + 1}`;
+    const count = Math.round(Number(st.count) || 1);
+    if (!(count >= 1 && count <= 200)) throw new Error(`${name}: number of staff must be between 1 and 200`);
+    if (!Array.isArray(st.shifts) || !st.shifts.length) throw new Error(`${name}: add at least one shift`);
+    let r;
+    try {
+      r = costShifts({
+        awardCode: body.awardCode,
+        baseCents,
+        shifts: st.shifts,
+        publicHolidays: body.publicHolidays,
+        otherHours: st.otherHoursThisWeek,
+        options: body.shiftOptions || {},
+      });
+    } catch (e) {
+      throw new Error(multi ? `${name}: ${e.message}` : e.message);
+    }
+    table = r.rateTable;
+    for (const l of r.lines) hoursByLabel.set(l.label, (hoursByLabel.get(l.label) || 0) + l.hours * count);
+    for (const a of r.addOns) {
+      const key = `${a.allowance}|${a.appliesToCategory}`;
+      const prev = addOnTotals.get(key) || { ...a, quantity: 0 };
+      prev.quantity += a.quantity * count;
+      addOnTotals.set(key, prev);
+    }
+    const tag = `${name}${count > 1 ? ` (x${count})` : ""}`;
+    for (const w of r.warnings) warnings.push(multi || count > 1 ? `${tag}: ${w}` : w);
+    r.assumptions.forEach((a) => assumptions.add(a));
+    const worked = Number(st.otherHoursThisWeek) || 0;
+    if (worked > 0) assumptions.add(`${name}: ${worked} hours already worked this week count toward the 38-hour weekly cap.`);
+    staffDetails.push({ name, count, otherHoursThisWeek: worked, shifts: r.shiftDetails });
   });
+
+  const round2 = (x) => Math.round(x * 100) / 100;
+  const lines = table
+    .filter((r) => hoursByLabel.has(r.penalty_description))
+    .map((r) => ({
+      label: r.penalty_description,
+      hours: round2(hoursByLabel.get(r.penalty_description)),
+      rate: r.calculated_value,
+      isOvertime: /overtime/i.test(r.clause_description),
+      clauses: r.clauses,
+    }));
+  const addOns = [...addOnTotals.values()].map((a) => ({ ...a, quantity: round2(a.quantity) }));
+  if (staffList.some((s) => Math.round(Number(s.count) || 1) > 1)) {
+    assumptions.add("Where several staff share a roster, the hours shown are the total across all of them; each is costed individually (their own weekly 38-hour cap).");
+  }
+  return { lines, rateTable: table, staffDetails, addOns, warnings, assumptions: [...assumptions] };
 }
 
 // Quotes saved before per-category charge rates existed only stored award rates.
@@ -71,10 +132,10 @@ export async function handleQuotes(request, env, url) {
   // Work out hours per pay category from proposed shifts (no pricing yet).
   if (match("/api/staff/roster/calculate", pathname) && method === "POST") {
     const body = await request.json().catch(() => ({}));
-    if (!Array.isArray(body.shifts) || !body.shifts.length) return error("Add at least one shift");
+    if (!hasShiftInput(body)) return error("Add at least one shift");
     try {
       const r = await runShiftEngine(env, body);
-      return json({ lines: r.lines, shiftDetails: r.shiftDetails, addOns: r.addOns, warnings: r.warnings, assumptions: r.assumptions });
+      return json({ lines: r.lines, staffDetails: r.staffDetails, addOns: r.addOns, warnings: r.warnings, assumptions: r.assumptions });
     } catch (e) {
       return error(e.message, 400);
     }
@@ -152,7 +213,7 @@ async function computeQuote(request, env) {
   if (!body.basePayRateId || !body.awardCode) return error("basePayRateId and awardCode required");
   // Shift mode: hours per category come from the shift engine (with any manual
   // line overrides); by-category mode: they're entered directly.
-  const shiftMode = Array.isArray(body.shifts) && body.shifts.length > 0;
+  const shiftMode = hasShiftInput(body);
   if (!shiftMode && (!Array.isArray(body.roster) || !body.roster.length)) return error("roster required");
 
   const settings = await getSettings(env);
@@ -189,9 +250,8 @@ async function computeQuote(request, env) {
     roster = [...hoursByLabel.entries()].filter(([, h]) => h > 0).map(([label, hours]) => ({ penaltyDescription: label, hours }));
     allowanceSelections = [...engine.addOns, ...(Array.isArray(body.allowances) ? body.allowances : [])];
     shiftPlan = {
-      shifts: engine.shiftDetails,
+      staff: engine.staffDetails,
       publicHolidays: body.publicHolidays || [],
-      otherHoursThisWeek: Number(body.otherHoursThisWeek) || 0,
       options: body.shiftOptions || {},
       warnings: engine.warnings,
       assumptions: engine.assumptions,

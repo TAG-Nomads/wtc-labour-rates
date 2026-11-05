@@ -48,6 +48,7 @@
   // the full build-up (award rates, on-costs, margin) for staff -- never send that one.
   const internal = params.get("internal") === "1";
   const money = (n) => `$${Number(n).toFixed(2)}`;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   document.getElementById("footerText").textContent = internal
     ? "INTERNAL COPY — contains award rates, on-costs and margin. Do not send to the client. Indicative build-up only, calculated from the Fair Work Modern Award rates in force at the time of calculation; the award is the controlling legal instrument."
     : "Rates are indicative, based on current award conditions, and exclusive of GST. Final charges are based on hours actually worked and the award conditions that apply to those hours.";
@@ -70,6 +71,14 @@
         : q.casual_rate_source === "loading_fallback"
         ? `permanent rates + ${q.casual_loading_pct}% fallback loading`
         : "n/a";
+    // New quotes store shifts.staff = [{name,count,shifts}]; older ones a single shifts.shifts list.
+    const rosterGroups = !q.shifts
+      ? []
+      : Array.isArray(q.shifts.staff)
+      ? q.shifts.staff.filter((g) => g.shifts && g.shifts.length)
+      : q.shifts.shifts && q.shifts.shifts.length
+      ? [{ name: null, count: 1, shifts: q.shifts.shifts }]
+      : [];
     const total =
       q.roster.reduce((s, l) => s + l.chargeLineTotal, 0) + (q.allowances || []).reduce((s, l) => s + l.chargeLineTotal, 0);
     document.getElementById("content").innerHTML = `
@@ -83,18 +92,24 @@
         ${internal ? `<div><span class="k">Award:</span> ${q.award_name} (${q.award_code})</div><div><span class="k">Casual rate source:</span> ${casualSource}</div>` : ""}
       </div>
       ${
-        q.shifts && q.shifts.shifts && q.shifts.shifts.length
-          ? `<p class="small" style="margin:0 0 4px"><strong>Proposed roster</strong>${q.shifts.publicHolidays && q.shifts.publicHolidays.length ? ` — public holiday: ${q.shifts.publicHolidays.map((d) => ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d]).join(", ")}` : ""}</p>
+        rosterGroups.length
+          ? `<p class="small" style="margin:0 0 4px"><strong>Proposed roster${rosterGroups.length > 1 || rosterGroups[0].count > 1 ? "s" : ""}</strong>${q.shifts.publicHolidays && q.shifts.publicHolidays.length ? ` — public holiday: ${q.shifts.publicHolidays.map((d) => ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d]).join(", ")}` : ""}</p>
+             ${rosterGroups
+               .map(
+                 (g) => `${g.name ? `<p style="margin:10px 0 4px;font-size:0.88rem"><strong>${esc(g.name)}</strong>${g.count > 1 ? ` — ${g.count} staff on this roster (hours shown are per person)` : ""}</p>` : ""}
              <table>
                <thead><tr><th>Shift</th><th class="num">Paid hours</th>${internal ? "<th>Split under the award</th>" : ""}</tr></thead>
-               <tbody>${q.shifts.shifts
+               <tbody>${g.shifts
                  .map(
                    (d) => `<tr><td>${d.dayName} ${d.start} – ${d.finish}${d.breakMins ? ` <span style="color:#777">(${d.breakMins} min unpaid break)</span>` : ""}</td><td class="num">${d.workedHours}</td>${
-                     internal ? `<td style="font-size:0.8rem">${d.segments.map((s) => `${s.hours}h ${s.label}${s.isOvertime ? " (OT)" : ""}`).join(" · ")}</td>` : ""
+                     internal ? `<td style="font-size:0.8rem">${d.segments.map((s) => `${s.hours}h ${esc(s.label)}${s.isOvertime ? " (OT)" : ""}`).join(" · ")}</td>` : ""
                    }</tr>`
                  )
                  .join("")}</tbody>
-             </table>
+             </table>`
+               )
+               .join("")}
+             ${rosterGroups.length > 1 || rosterGroups[0].count > 1 ? `<p style="font-size:0.8rem;color:#666;margin:0 0 12px">The pay-category hours below are the totals across all staff.</p>` : ""}
              ${
                internal && q.shifts.warnings && q.shifts.warnings.length
                  ? `<div style="background:#fff3cd;border:1px solid #e0b400;padding:8px 10px;font-size:0.8rem;margin-bottom:12px"><strong>Calculator warnings:</strong><ul style="margin:4px 0 0 16px;padding:0">${q.shifts.warnings.map((w) => `<li>${w}</li>`).join("")}</ul></div>`

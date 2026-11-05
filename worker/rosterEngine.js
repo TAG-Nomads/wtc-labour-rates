@@ -31,10 +31,10 @@ const TABLES = {
     ["Saturday", 150, "Table 12, cl 22.1(b)", false],
     ["Sunday", 175, "Table 12, cl 22.1(b)", false],
     ["Public holiday", 250, "Table 12, cl 22.1(b), cl 33.3", false],
-    ["Shiftwork - Monday to Friday", 155, "cl 25.1", false],
-    ["Shiftwork - Saturday", 175, "cl 25.1", false],
-    ["Shiftwork - Sunday", 200, "cl 25.1", false],
-    ["Shiftwork - Public holiday", 250, "cl 25.3(a), Table 12", false],
+    ["Ordinary hours - Shiftwork, Monday to Friday", 155, "cl 25.1", false],
+    ["Ordinary hours - Shiftwork, Saturday", 175, "cl 25.1", false],
+    ["Ordinary hours - Shiftwork, Sunday", 200, "cl 25.1", false],
+    ["Ordinary hours - Shiftwork, Public holiday", 250, "cl 25.3(a), Table 12", false],
     ["Overtime - Monday to Saturday, first 3 hours", 175, "Table 11, cl 21.2", true],
     ["Overtime - Monday to Saturday, after 3 hours", 225, "Table 11, cl 21.2", true],
     ["Overtime - Sunday", 225, "Table 11, cl 21.2", true],
@@ -53,9 +53,9 @@ const TABLES = {
   ],
   MA000084: [
     ["Ordinary hours", 125, "Schedule B.2.1, cl 11.2", false],
-    ["Early morning shift", 137.5, "Schedule B.2.2, cl 20.4(a)", false],
-    ["Afternoon shift", 140, "Schedule B.2.2, cl 20.4(b)", false],
-    ["Night shift", 155, "Schedule B.2.2, cl 20.4(c)", false],
+    ["Ordinary hours - Early morning shift", 137.5, "Schedule B.2.2, cl 20.4(a)", false],
+    ["Ordinary hours - Afternoon shift", 140, "Schedule B.2.2, cl 20.4(b)", false],
+    ["Ordinary hours - Night shift", 155, "Schedule B.2.2, cl 20.4(c)", false],
     ["Saturday", 175, "cl 22.1(a)", false],
     ["Sunday", 225, "cl 22.2(a)", false],
     ["Public holiday", 275, "cl 22.3(a)", false],
@@ -173,9 +173,9 @@ export function costShifts({ awardCode, baseCents, shifts, publicHolidays = [], 
     const finishTod = ((finishAbs % DAY) + DAY) % DAY;
     const sameDayFinish = finishAbs < (s.day + 1) * DAY || finishAbs === (s.day + 1) * DAY;
     const matches = [];
-    if (s.start >= 2 * MIN && s.start < 7 * MIN) matches.push("Early morning shift");
-    if (sameDayFinish && (finishTod > 18 * MIN || finishAbs === (s.day + 1) * DAY)) matches.push("Afternoon shift");
-    if (!sameDayFinish && finishTod > 0 && finishTod <= 8 * MIN + 30) matches.push("Night shift");
+    if (s.start >= 2 * MIN && s.start < 7 * MIN) matches.push("Ordinary hours - Early morning shift");
+    if (sameDayFinish && (finishTod > 18 * MIN || finishAbs === (s.day + 1) * DAY)) matches.push("Ordinary hours - Afternoon shift");
+    if (!sameDayFinish && finishTod > 0 && finishTod <= 8 * MIN + 30) matches.push("Ordinary hours - Night shift");
     if (s.start >= 7 * MIN && sameDayFinish && finishTod <= 17 * MIN + 30 && finishAbs !== (s.day + 1) * DAY) matches.push("Ordinary hours");
     return matches;
   };
@@ -242,12 +242,12 @@ export function costShifts({ awardCode, baseCents, shifts, publicHolidays = [], 
           if (!isOt) {
             // A shift that begins on a public holiday is a public holiday shift for all its hours (cl 25.3(b)).
             label = isPh || ph.has(s.day)
-              ? "Shiftwork - Public holiday"
+              ? "Ordinary hours - Shiftwork, Public holiday"
               : dow === 5
-              ? "Shiftwork - Saturday"
+              ? "Ordinary hours - Shiftwork, Saturday"
               : dow === 6
-              ? "Shiftwork - Sunday"
-              : "Shiftwork - Monday to Friday";
+              ? "Ordinary hours - Shiftwork, Sunday"
+              : "Ordinary hours - Shiftwork, Monday to Friday";
           }
         } else {
           const [from, to] = retailSpan(dow);
@@ -395,7 +395,7 @@ export function costShifts({ awardCode, baseCents, shifts, publicHolidays = [], 
   }
 
   assumptions.push(`Unpaid break is placed ${shifts.some((x) => Number(x.breakMins) > 0) ? "in the middle of the shift (or 4 hours in, whichever is sooner)" : "n/a - none entered"}.`);
-  assumptions.push(`Daily ordinary-hours cap used: ${cap / 60} hours per shift/day; weekly cap: 38 hours (4-week averaging is not modelled). Hours already worked this week: ${Math.max(0, Number(otherHours) || 0)}.`);
+  assumptions.push(`Daily ordinary-hours cap used: ${cap / 60} hours per shift/day; weekly cap: 38 hours per person (4-week averaging is not modelled).`);
   if (awardCode === "MA000004") {
     assumptions.push("Ordinary hours outside the award's span (Mon-Fri 7am-9pm, Sat 7am-6pm, Sun 9am-6pm) are overtime (cl 21.2). Shifts past the span are priced as overtime unless the worker is employed as a shiftworker or the site trades later.");
     if (retailShiftwork) assumptions.push("Shiftwork: only the weekly 38-hour overtime trigger is applied - the award's daily limits for shiftworkers were not verified.");

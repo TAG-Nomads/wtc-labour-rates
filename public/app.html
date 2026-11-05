@@ -82,21 +82,16 @@
 
       <div id="shiftSection" hidden>
         <div class="notice">
-          Add the shifts the client wants — pick the days, the start time and how long the shift is
-          (e.g. starts 6:00 pm, 8 hours). The tool works out which hours are ordinary, penalty or
-          overtime under this award, using each award's own rules, and shows its working.
+          Build the roster one staff member at a time. For each day give the start and finish time
+          (or the start and how long the shift is, e.g. starts 6:00 pm, 8 hours) — every shift can
+          have its own times. If several staff work the same roster, enter it once and set
+          <em>number of staff on this roster</em>. The tool works out which hours are ordinary, penalty
+          or overtime for each person under this award and shows its working.
         </div>
-        <div class="row" style="align-items:flex-end">
-          <div class="field" style="flex:0 0 auto"><label>Days</label><div id="shiftDays" class="day-checks"></div></div>
-          <div class="field" style="flex:0 0 120px"><label for="shiftStart">Start time</label><input type="time" id="shiftStart" value="18:00"></div>
-          <div class="field" style="flex:0 0 120px"><label for="shiftLength">Length (hours)</label><input type="number" id="shiftLength" step="0.25" min="0.25" max="24" value="8"></div>
-          <div class="field" style="flex:0 0 140px"><label for="shiftBreak">Unpaid break (mins)</label><input type="number" id="shiftBreak" step="5" min="0" value="30"></div>
-          <div class="field" style="flex:0 0 auto"><button type="button" id="addShiftsBtn">Add shift(s)</button></div>
-        </div>
+        <div id="staffBlocks"></div>
         <div id="shiftError"></div>
-        <div id="shiftList"></div>
-        <div class="row">
-          <div class="field" style="flex:0 0 230px"><label for="otherHours">Hours already worked this week</label><input type="number" id="otherHours" min="0" step="0.25" value="0"></div>
+        <button type="button" id="addStaffBtn">+ Add another staff roster</button>
+        <div class="row" style="margin-top:14px">
           <div class="field" style="flex:0 0 200px"><label for="dailyCap">Daily ordinary-hours cap</label><input type="number" id="dailyCap" min="1" max="24" step="0.25"></div>
           <div class="field" id="retailOptions" hidden style="flex:1; min-width:260px">
             <label style="color:var(--text)"><input type="checkbox" id="optShiftworker"> Employed as a shiftworker (cl 23–25)</label>
