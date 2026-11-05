@@ -63,7 +63,9 @@
     const rateTh = internal ? '<th class="num">Award rate</th>' : "";
     const rateTd = (v) => (internal ? `<td class="num">${money(v)}</td>` : "");
     const casualSource =
-      q.casual_rate_source === "award_table"
+      q.casual_rate_source === "shift_calculator"
+        ? "shift calculator (award rules applied to the proposed shifts)"
+        : q.casual_rate_source === "award_table"
         ? "award's own official casual pay table"
         : q.casual_rate_source === "loading_fallback"
         ? `permanent rates + ${q.casual_loading_pct}% fallback loading`
@@ -80,6 +82,36 @@
         <div><span class="k">Prepared by:</span> ${q.staff_name}</div>
         ${internal ? `<div><span class="k">Award:</span> ${q.award_name} (${q.award_code})</div><div><span class="k">Casual rate source:</span> ${casualSource}</div>` : ""}
       </div>
+      ${
+        q.shifts && q.shifts.shifts && q.shifts.shifts.length
+          ? `<p class="small" style="margin:0 0 4px"><strong>Proposed roster</strong>${q.shifts.publicHolidays && q.shifts.publicHolidays.length ? ` — public holiday: ${q.shifts.publicHolidays.map((d) => ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][d]).join(", ")}` : ""}</p>
+             <table>
+               <thead><tr><th>Shift</th><th class="num">Paid hours</th>${internal ? "<th>Split under the award</th>" : ""}</tr></thead>
+               <tbody>${q.shifts.shifts
+                 .map(
+                   (d) => `<tr><td>${d.dayName} ${d.start} – ${d.finish}${d.breakMins ? ` <span style="color:#777">(${d.breakMins} min unpaid break)</span>` : ""}</td><td class="num">${d.workedHours}</td>${
+                     internal ? `<td style="font-size:0.8rem">${d.segments.map((s) => `${s.hours}h ${s.label}${s.isOvertime ? " (OT)" : ""}`).join(" · ")}</td>` : ""
+                   }</tr>`
+                 )
+                 .join("")}</tbody>
+             </table>
+             ${
+               internal && q.shifts.warnings && q.shifts.warnings.length
+                 ? `<div style="background:#fff3cd;border:1px solid #e0b400;padding:8px 10px;font-size:0.8rem;margin-bottom:12px"><strong>Calculator warnings:</strong><ul style="margin:4px 0 0 16px;padding:0">${q.shifts.warnings.map((w) => `<li>${w}</li>`).join("")}</ul></div>`
+                 : ""
+             }
+             ${
+               internal && q.shifts.overrides && q.shifts.overrides.length
+                 ? `<p style="font-size:0.8rem;color:#8a5a00"><strong>Hours manually adjusted:</strong> ${q.shifts.overrides.map((o) => `${o.label} ${o.from}h → ${o.to}h`).join("; ")}</p>`
+                 : ""
+             }
+             ${
+               internal && q.shifts.assumptions && q.shifts.assumptions.length
+                 ? `<details style="font-size:0.75rem;color:#555;margin-bottom:12px"><summary>Assumptions used</summary><ul style="margin:4px 0 0 16px;padding:0">${q.shifts.assumptions.map((a) => `<li>${a}</li>`).join("")}</ul></details>`
+                 : ""
+             }`
+          : ""
+      }
       <table>
         <thead><tr><th>Pay category</th><th class="num">Hours</th>${rateTh}<th class="num">Charge rate (excl. GST)</th><th class="num">Charge total</th></tr></thead>
         <tbody>

@@ -23,7 +23,7 @@ export default {
       return handleAwards(request, env, url);
     }
 
-    if (pathname.startsWith("/api/staff/quotes")) {
+    if (pathname.startsWith("/api/staff/quotes") || pathname.startsWith("/api/staff/roster")) {
       return handleQuotes(request, env, url);
     }
 

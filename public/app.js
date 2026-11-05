@@ -96,6 +96,7 @@ function wireEvents() {
 
   $("addAccountBtn").addEventListener("click", addAccount);
   $("saveSettingsBtn").addEventListener("click", saveSettings);
+  wireShiftEvents();
 }
 
 async function saveSettings() {
@@ -196,6 +197,10 @@ async function onClassificationChange() {
 async function loadRateCategories() {
   const priorHours = collectRosterHoursByCategory();
   const bpr = SELECTED_CLASSIFICATION && SELECTED_CLASSIFICATION.base_pay_rate_id;
+  // Rates depend on the classification and casual flag, so any shift result is stale.
+  SHIFT_RESULT = null;
+  $("shiftResult").innerHTML = "";
+  updateModeUI();
   if (!bpr) {
     RATE_CATEGORIES = [];
     renderRoster();
@@ -227,6 +232,18 @@ function collectRosterHoursByCategory() {
 // already carry their own premium and don't stack with these).
 function eligibleOrdinaryCategories() {
   const eligible = [];
+  if (shiftModeActive()) {
+    // Shift mode: the attachment targets are the (possibly adjusted) non-overtime lines of the shift result.
+    if (SHIFT_RESULT) {
+      for (const l of SHIFT_RESULT.lines) {
+        if (l.isOvertime) continue;
+        const inp = document.querySelector(`.shift-line-hours[data-label="${CSS.escape(l.label)}"]`);
+        const hours = inp ? parseFloat(inp.value) : l.hours;
+        if (hours > 0) eligible.push({ penaltyDescription: l.label, hours });
+      }
+    }
+    return eligible;
+  }
   document.querySelectorAll(".roster-hours").forEach((input) => {
     const hours = parseFloat(input.value);
     if (!(hours > 0)) return;
@@ -328,7 +345,9 @@ function renderAllowances(priorSelections) {
   const eligible = eligibleOrdinaryCategories();
   const otherVisible = !document.getElementById("otherAllowancesTable") || !document.getElementById("otherAllowancesTable").hidden;
   section.innerHTML = `
-    <label class="mt-8">Allowances for this award (optional) — enter a quantity for any that apply to this roster.</label>
+    <label class="mt-8">Allowances for this award (optional) — enter a quantity for any that apply to this roster.${
+      shiftModeActive() ? " Allowances the shift calculator works out itself (e.g. Hospitality evening/night add-ons) are added automatically — only add others here." : ""
+    }</label>
     ${
       ALLOWANCES.common.length
         ? `<table>
@@ -384,11 +403,231 @@ function collectRoster() {
   return roster;
 }
 
-async function calculate() {
-  const roster = collectRoster();
-  if (!roster.length) {
-    $("breakdown").innerHTML = `<div class="notice error">Enter hours for at least one roster category.</div>`;
+// ---------- shift calculator ----------
+// Awards the shift engine covers (worker/rosterEngine.js) with their default
+// daily ordinary-hours cap and the hours after which a meal break is required.
+const SHIFT_AWARDS = { MA000004: { cap: 9, meal: 5, retail: true }, MA000009: { cap: 12, meal: 6 }, MA000084: { cap: 8, meal: 5 } };
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+let SHIFTS = [];
+let SHIFT_RESULT = null;
+let BREAK_TOUCHED = false;
+
+const entryMode = () => document.querySelector('input[name="entryMode"]:checked').value;
+const shiftModeActive = () => !$("modeSection").hidden && entryMode() === "shifts";
+
+function shiftsAvailable() {
+  return !!(
+    SELECTED_AWARD &&
+    SHIFT_AWARDS[SELECTED_AWARD.award_code] &&
+    $("isCasual").checked &&
+    SELECTED_CLASSIFICATION &&
+    SELECTED_CLASSIFICATION.employee_rate_type_code === "AD"
+  );
+}
+
+function updateModeUI() {
+  const cfg = SELECTED_AWARD && SHIFT_AWARDS[SELECTED_AWARD.award_code];
+  const avail = shiftsAvailable();
+  $("modeSection").hidden = !avail;
+  $("modeNote").textContent = cfg && !avail ? "The shift calculator needs a casual adult classification — enter hours by pay category for this selection." : "";
+  const useShifts = avail && entryMode() === "shifts";
+  $("shiftSection").hidden = !useShifts;
+  $("rosterSection").hidden = useShifts;
+  if (avail) {
+    if ($("dailyCap").dataset.award !== SELECTED_AWARD.award_code) {
+      $("dailyCap").value = cfg.cap;
+      $("dailyCap").dataset.award = SELECTED_AWARD.award_code;
+    }
+    $("retailOptions").hidden = !cfg.retail;
+  }
+}
+
+function invalidateShiftResult() {
+  SHIFT_RESULT = null;
+  $("shiftResult").innerHTML = "";
+  $("breakdown").innerHTML = "";
+  $("saveBtn").disabled = true;
+  renderAllowances(collectAllowancePriorState());
+}
+
+function renderDayChecks() {
+  const boxes = (prefix) => DAY_SHORT.map((d, i) => `<label><input type="checkbox" id="${prefix}${i}"> ${d}</label>`).join("");
+  $("shiftDays").innerHTML = boxes("dayChk");
+  $("phDays").innerHTML = boxes("phChk");
+  document.querySelectorAll('[id^="phChk"]').forEach((c) => c.addEventListener("change", invalidateShiftResult));
+}
+
+function finishText(s) {
+  const [h, m] = s.start.split(":").map(Number);
+  const total = h * 60 + m + Math.round(s.lengthHours * 60);
+  const dayOffset = Math.floor(total / 1440);
+  const mm = total % 1440;
+  const hh = Math.floor(mm / 60);
+  const text = `${hh % 12 === 0 ? 12 : hh % 12}:${String(mm % 60).padStart(2, "0")} ${hh >= 12 ? "pm" : "am"}`;
+  return dayOffset ? `${text} (${DAY_SHORT[(s.day + dayOffset) % 7]})` : text;
+}
+
+function renderShiftList() {
+  if (!SHIFTS.length) {
+    $("shiftList").innerHTML = `<p class="small muted">No shifts added yet.</p>`;
     return;
+  }
+  $("shiftList").innerHTML = `<table>
+    <thead><tr><th>Day</th><th>Start</th><th class="num">Length (h)</th><th>Finish</th><th class="num">Unpaid break (min)</th><th></th></tr></thead>
+    <tbody>
+      ${SHIFTS.map(
+        (s, i) => `<tr>
+          <td><select class="shift-field" data-i="${i}" data-k="day">${DAY_SHORT.map((d, di) => `<option value="${di}" ${s.day === di ? "selected" : ""}>${d}</option>`).join("")}</select></td>
+          <td><input type="time" class="shift-field" data-i="${i}" data-k="start" value="${s.start}"></td>
+          <td class="num"><input type="number" class="shift-field" data-i="${i}" data-k="lengthHours" step="0.25" min="0.25" max="24" value="${s.lengthHours}" style="text-align:right"></td>
+          <td class="muted">${finishText(s)}</td>
+          <td class="num"><input type="number" class="shift-field" data-i="${i}" data-k="breakMins" step="5" min="0" value="${s.breakMins}" style="text-align:right"></td>
+          <td><button type="button" class="link shift-remove" data-i="${i}">Remove</button></td>
+        </tr>`
+      ).join("")}
+    </tbody></table>`;
+  document.querySelectorAll(".shift-field").forEach((el) => {
+    el.addEventListener("change", () => {
+      const s = SHIFTS[Number(el.dataset.i)];
+      const k = el.dataset.k;
+      s[k] = k === "day" ? Number(el.value) : k === "start" ? el.value : parseFloat(el.value) || 0;
+      invalidateShiftResult();
+      renderShiftList();
+    });
+  });
+  document.querySelectorAll(".shift-remove").forEach((el) => {
+    el.addEventListener("click", () => {
+      SHIFTS.splice(Number(el.dataset.i), 1);
+      invalidateShiftResult();
+      renderShiftList();
+    });
+  });
+}
+
+function addShifts() {
+  const days = DAY_SHORT.map((_, i) => i).filter((i) => $(`dayChk${i}`).checked);
+  const start = $("shiftStart").value;
+  const lengthHours = parseFloat($("shiftLength").value);
+  const breakMins = parseInt($("shiftBreak").value, 10) || 0;
+  if (!days.length) return ($("shiftError").innerHTML = `<div class="notice error">Tick at least one day for the shift.</div>`);
+  if (!start) return ($("shiftError").innerHTML = `<div class="notice error">Enter a start time.</div>`);
+  if (!(lengthHours > 0 && lengthHours <= 24)) return ($("shiftError").innerHTML = `<div class="notice error">Shift length must be between 0 and 24 hours.</div>`);
+  $("shiftError").innerHTML = "";
+  for (const day of days) SHIFTS.push({ day, start, lengthHours, breakMins });
+  SHIFTS.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
+  invalidateShiftResult();
+  renderShiftList();
+}
+
+function shiftPayloadParts() {
+  const overrides = {};
+  if (SHIFT_RESULT) {
+    document.querySelectorAll(".shift-line-hours").forEach((inp) => {
+      const orig = SHIFT_RESULT.lines.find((l) => l.label === inp.dataset.label);
+      const v = parseFloat(inp.value);
+      if (orig && !isNaN(v) && Math.abs(v - orig.hours) > 0.001) overrides[inp.dataset.label] = v;
+    });
+  }
+  return {
+    shifts: SHIFTS.map((s) => ({ day: s.day, start: s.start, lengthHours: s.lengthHours, breakMins: s.breakMins })),
+    publicHolidays: DAY_SHORT.map((_, i) => i).filter((i) => $(`phChk${i}`).checked),
+    otherHoursThisWeek: parseFloat($("otherHours").value) || 0,
+    shiftOptions: {
+      dailyCapHours: parseFloat($("dailyCap").value) || undefined,
+      shiftworker: $("optShiftworker").checked,
+      lateTrading: $("optLateTrading").checked,
+    },
+    lineOverrides: overrides,
+  };
+}
+
+async function workOutHours() {
+  $("shiftError").innerHTML = "";
+  if (!SHIFTS.length) {
+    $("shiftError").innerHTML = `<div class="notice error">Add at least one shift first.</div>`;
+    return false;
+  }
+  const parts = shiftPayloadParts();
+  delete parts.lineOverrides;
+  try {
+    SHIFT_RESULT = await api("/api/staff/roster/calculate", {
+      method: "POST",
+      body: JSON.stringify({ awardCode: SELECTED_AWARD.award_code, basePayRateId: SELECTED_CLASSIFICATION.base_pay_rate_id, isCasual: true, ...parts }),
+    });
+  } catch (e) {
+    SHIFT_RESULT = null;
+    $("shiftResult").innerHTML = `<div class="notice error">${e.message}</div>`;
+    renderAllowances(collectAllowancePriorState());
+    return false;
+  }
+  renderShiftResult();
+  renderAllowances(collectAllowancePriorState());
+  return true;
+}
+
+function renderShiftResult() {
+  const r = SHIFT_RESULT;
+  const splitText = (d) => d.segments.map((s) => `${s.hours}h ${s.label}${s.isOvertime ? ' <span class="pill" style="color:var(--amber);border-color:var(--amber)">OT</span>' : ""}`).join(" · ");
+  $("shiftResult").innerHTML = `
+    ${r.warnings.length ? `<div class="notice warn"><strong>Check before quoting:</strong><ul style="margin:6px 0 0 18px;padding:0">${r.warnings.map((w) => `<li>${w}</li>`).join("")}</ul></div>` : ""}
+    <h3 class="mt-8" style="margin-bottom:8px">How each shift splits</h3>
+    <table>
+      <thead><tr><th>Shift</th><th class="num">Paid hours</th><th>Split under the award</th></tr></thead>
+      <tbody>${r.shiftDetails.map((d) => `<tr><td>${d.dayName} ${d.start} – ${d.finish}${d.breakMins ? ` <span class="muted small">(${d.breakMins} min unpaid break)</span>` : ""}</td><td class="num">${d.workedHours}</td><td class="small">${splitText(d)}</td></tr>`).join("")}</tbody>
+    </table>
+    <h3 class="mt-8" style="margin-bottom:8px">Hours by pay category <span class="muted small">— you can adjust these; adjustments are recorded on the quote</span></h3>
+    <table>
+      <thead><tr><th>Category</th><th>Clause</th><th class="num">Award rate</th><th class="num" style="width:110px">Hours</th></tr></thead>
+      <tbody>${r.lines
+        .map(
+          (l) => `<tr><td>${l.label}${otBadge(l.isOvertime)}</td><td class="muted small">${l.clauses}</td><td class="num">${money(l.rate)}</td>
+          <td class="num"><input type="number" min="0" step="0.25" class="shift-line-hours" data-label="${l.label}" value="${l.hours}" style="text-align:right"></td></tr>`
+        )
+        .join("")}</tbody>
+    </table>
+    ${r.addOns.length ? `<p class="small muted">Added automatically from the shifts: ${r.addOns.map((a) => `${a.quantity}h ${a.allowance}`).join("; ")}.</p>` : ""}
+    <details class="small muted" style="margin-top:6px"><summary>Assumptions used</summary><ul style="margin:6px 0 0 18px;padding:0">${r.assumptions.map((a) => `<li>${a}</li>`).join("")}</ul></details>
+  `;
+  document.querySelectorAll(".shift-line-hours").forEach((inp) => {
+    inp.addEventListener("input", () => {
+      $("breakdown").innerHTML = "";
+      $("saveBtn").disabled = true;
+      renderAllowances(collectAllowancePriorState());
+    });
+  });
+}
+
+function wireShiftEvents() {
+  renderDayChecks();
+  renderShiftList();
+  document.querySelectorAll('input[name="entryMode"]').forEach((r) =>
+    r.addEventListener("change", () => {
+      updateModeUI();
+      invalidateShiftResult();
+    })
+  );
+  $("addShiftsBtn").addEventListener("click", addShifts);
+  $("workOutBtn").addEventListener("click", workOutHours);
+  ["otherHours", "dailyCap", "optShiftworker", "optLateTrading"].forEach((id) => $(id).addEventListener("change", invalidateShiftResult));
+  // Suggest a 30-minute unpaid meal break for longer shifts until the user sets one themselves.
+  $("shiftBreak").addEventListener("input", () => (BREAK_TOUCHED = true));
+  $("shiftLength").addEventListener("input", () => {
+    if (BREAK_TOUCHED || !SELECTED_AWARD || !SHIFT_AWARDS[SELECTED_AWARD.award_code]) return;
+    $("shiftBreak").value = parseFloat($("shiftLength").value) > SHIFT_AWARDS[SELECTED_AWARD.award_code].meal ? 30 : 0;
+  });
+}
+
+async function calculate() {
+  const shiftMode = shiftModeActive();
+  let roster = [];
+  if (shiftMode) {
+    if (!SHIFT_RESULT && !(await workOutHours())) return;
+  } else {
+    roster = collectRoster();
+    if (!roster.length) {
+      $("breakdown").innerHTML = `<div class="notice error">Enter hours for at least one roster category.</div>`;
+      return;
+    }
   }
   const payload = {
     awardCode: SELECTED_AWARD.award_code,
@@ -399,6 +638,7 @@ async function calculate() {
     marginPct: parseFloat($("marginPct").value),
     roster,
     allowances: collectAllowances(),
+    ...(shiftMode ? shiftPayloadParts() : {}),
   };
   try {
     LAST_BREAKDOWN = await api("/api/staff/quotes/preview", { method: "POST", body: JSON.stringify(payload) });
@@ -434,17 +674,24 @@ function renderBreakdown(b) {
       )}</div>
     </div>
     <div class="small muted mt-8">
-      Weighted average across this roster (reference only — not what's charged): award $${money(b.blendedAwardRate)}/hr →
-      cost $${money(b.costRate)}/hr (+${b.oncostPct}% on-costs) → charge $${money(b.chargeRate)}/hr (+${b.marginPct}% margin)
+      Weighted average across this roster (reference only — not what's charged): award ${money(b.blendedAwardRate)}/hr →
+      cost ${money(b.costRate)}/hr (+${b.oncostPct}% on-costs) → charge ${money(b.chargeRate)}/hr (+${b.marginPct}% margin)
     </div>
     <div class="small muted mt-8">Total rostered hours: ${b.totalHours} — total award pay: ${money(b.totalPay)}</div>
     <div class="small muted mt-8">Casual rate source: ${
-      b.casualRateSource === "award_table"
+      b.casualRateSource === "shift_calculator"
+        ? "shift calculator — award rules applied to the proposed shifts"
+        : b.casualRateSource === "award_table"
         ? "award's own official casual pay table"
         : b.casualRateSource === "loading_fallback"
         ? "permanent rates + fallback casual loading %"
         : "not applicable (not a casual placement)"
     }</div>
+    ${
+      b.shiftPlan && b.shiftPlan.overrides && b.shiftPlan.overrides.length
+        ? `<div class="notice warn mt-8">Hours manually adjusted from the calculator: ${b.shiftPlan.overrides.map((o) => `${o.label} ${o.from}h → ${o.to}h`).join("; ")}</div>`
+        : ""
+    }
   `;
 }
 
@@ -454,7 +701,8 @@ async function saveQuote() {
     alert("Enter the employer / client name before saving.");
     return;
   }
-  const roster = collectRoster();
+  const shiftMode = shiftModeActive();
+  const roster = shiftMode ? [] : collectRoster();
   const payload = {
     clientName,
     roleTitle: $("roleTitle").value.trim(),
@@ -470,6 +718,7 @@ async function saveQuote() {
     roster,
     allowances: collectAllowances(),
     notes: $("notes").value.trim(),
+    ...(shiftMode ? shiftPayloadParts() : {}),
   };
   try {
     const quote = await api("/api/staff/quotes", { method: "POST", body: JSON.stringify(payload) });
