@@ -474,7 +474,7 @@ async function saveQuote() {
   try {
     const quote = await api("/api/staff/quotes", { method: "POST", body: JSON.stringify(payload) });
     loadHistory();
-    $("breakdown").innerHTML += `<div class="notice mt-8">Saved. <a href="/quote-print.html?id=${quote.id}" target="_blank">Open printable quote</a></div>`;
+    $("breakdown").innerHTML += `<div class="notice mt-8">Saved. <a href="/quote-print.html?id=${quote.id}" target="_blank">Open client quote</a> (our charge rates only) · <a href="/quote-print.html?id=${quote.id}&internal=1" target="_blank">internal copy</a> (shows award rates and margin — don't send)</div>`;
     $("saveBtn").disabled = true;
   } catch (e) {
     $("breakdown").innerHTML += `<div class="notice error mt-8">${e.message}</div>`;
@@ -495,7 +495,7 @@ async function loadHistory() {
               <td>${q.award_name}</td>
               <td class="num">${money(q.charge_rate)}/hr</td>
               <td>${q.staff_name}</td>
-              <td><a href="/quote-print.html?id=${q.id}" target="_blank">View</a></td>
+              <td><a href="/quote-print.html?id=${q.id}" target="_blank">Client quote</a> · <a href="/quote-print.html?id=${q.id}&internal=1" target="_blank">Internal</a></td>
             </tr>`
           ).join("")}
         </tbody>

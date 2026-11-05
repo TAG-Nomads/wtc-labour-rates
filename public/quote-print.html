@@ -39,17 +39,18 @@
   </header>
   <h1>Indicative labour hire rate</h1>
   <div id="content">Loading…</div>
-  <footer>
-    Indicative rate build-up only, calculated from the Fair Work Modern Award rates in force at the time of calculation.
-    The applicable award is the controlling legal instrument — confirm classification and conditions against the award
-    (and any enterprise agreement or labour-hire licensing requirement) before engagement. Casual loading is sourced
-    from the award's own casual employment clause; confirm before finalising if the roster includes significant
-    overtime or weekend work.
-  </footer>
+  <footer id="footerText"></footer>
 
 <script>
-  const id = new URLSearchParams(location.search).get("id");
+  const params = new URLSearchParams(location.search);
+  const id = params.get("id");
+  // Default is the client-facing quote: our charge rates only. ?internal=1 shows
+  // the full build-up (award rates, on-costs, margin) for staff -- never send that one.
+  const internal = params.get("internal") === "1";
   const money = (n) => `$${Number(n).toFixed(2)}`;
+  document.getElementById("footerText").textContent = internal
+    ? "INTERNAL COPY — contains award rates, on-costs and margin. Do not send to the client. Indicative build-up only, calculated from the Fair Work Modern Award rates in force at the time of calculation; the award is the controlling legal instrument."
+    : "Rates are indicative, based on current award conditions, and exclusive of GST. Final charges are based on hours actually worked and the award conditions that apply to those hours.";
 
   fetch(`/api/staff/quotes/${id}`).then(async (res) => {
     if (res.status === 401) { location.href = "/login.html"; return; }
@@ -58,48 +59,51 @@
     const dateStr = new Date(q.created_at + "Z").toISOString().slice(0, 10);
     document.title = `WTC Quote - ${q.client_name} - ${dateStr} - ${q.id}`;
     document.getElementById("dateOut").textContent = new Date(q.created_at + "Z").toLocaleString();
+    if (internal) document.title += " (INTERNAL)";
+    const rateTh = internal ? '<th class="num">Award rate</th>' : "";
+    const rateTd = (v) => (internal ? `<td class="num">${money(v)}</td>` : "");
+    const casualSource =
+      q.casual_rate_source === "award_table"
+        ? "award's own official casual pay table"
+        : q.casual_rate_source === "loading_fallback"
+        ? `permanent rates + ${q.casual_loading_pct}% fallback loading`
+        : "n/a";
+    const total =
+      q.roster.reduce((s, l) => s + l.chargeLineTotal, 0) + (q.allowances || []).reduce((s, l) => s + l.chargeLineTotal, 0);
     document.getElementById("content").innerHTML = `
+      ${internal ? '<p style="background:#fff3cd;border:1px solid #e0b400;padding:8px 10px;font-weight:700">INTERNAL COPY — shows award rates, on-costs and margin. Do not send to the client.</p>' : ""}
       <div class="meta-grid">
         <div><span class="k">Employer / client:</span> ${q.client_name}</div>
         <div><span class="k">Role:</span> ${q.role_title || "—"}</div>
-        <div><span class="k">Award:</span> ${q.award_name} (${q.award_code})</div>
         <div><span class="k">Classification:</span> ${q.classification_name}</div>
-        <div><span class="k">Employment type:</span> ${q.employee_rate_type_code}${q.is_casual ? " (casual)" : ""}</div>
-        <div><span class="k">Casual rate source:</span> ${
-          q.casual_rate_source === "award_table"
-            ? "award's own official casual pay table"
-            : q.casual_rate_source === "loading_fallback"
-            ? `permanent rates + ${q.casual_loading_pct}% fallback loading`
-            : "n/a"
-        }</div>
+        <div><span class="k">Engagement:</span> ${q.is_casual ? "Casual" : "Permanent"}</div>
         <div><span class="k">Prepared by:</span> ${q.staff_name}</div>
+        ${internal ? `<div><span class="k">Award:</span> ${q.award_name} (${q.award_code})</div><div><span class="k">Casual rate source:</span> ${casualSource}</div>` : ""}
       </div>
-      <p class="small" style="color:#666">Charged exactly as the staff member earns, per category, plus on-costs and margin — not a single blended rate.</p>
       <table>
-        <thead><tr><th>Pay category</th><th class="num">Hours</th><th class="num">Award rate</th><th class="num">Charge rate (excl. GST)</th><th class="num">Charge total</th></tr></thead>
+        <thead><tr><th>Pay category</th><th class="num">Hours</th>${rateTh}<th class="num">Charge rate (excl. GST)</th><th class="num">Charge total</th></tr></thead>
         <tbody>
-          ${q.roster.map((l) => `<tr><td>${l.penaltyDescription}${l.isOvertime ? ' <span class="ot-badge">OT</span>' : ""}</td><td class="num">${l.hours}</td><td class="num">${money(l.loadedRate)}</td><td class="num">${money(l.chargeRate)}</td><td class="num">${money(l.chargeLineTotal)}</td></tr>`).join("")}
+          ${q.roster.map((l) => `<tr><td>${l.penaltyDescription}${l.isOvertime ? ' <span class="ot-badge">OT</span>' : ""}</td><td class="num">${l.hours}</td>${rateTd(l.loadedRate)}<td class="num">${money(l.chargeRate)}</td><td class="num">${money(l.chargeLineTotal)}</td></tr>`).join("")}
         </tbody>
       </table>
       ${
         q.allowances && q.allowances.length
           ? `<table>
-              <thead><tr><th>Allowance</th><th class="num">Qty</th><th class="num">Award rate</th><th class="num">Charge rate (excl. GST)</th><th class="num">Charge total</th></tr></thead>
-              <tbody>${q.allowances.map((l) => `<tr><td>${l.allowance}</td><td class="num">${l.quantity}</td><td class="num">${money(l.amount)}</td><td class="num">${money(l.chargeRate)}</td><td class="num">${money(l.chargeLineTotal)}</td></tr>`).join("")}</tbody>
+              <thead><tr><th>Allowance</th><th class="num">Qty</th>${rateTh}<th class="num">Charge rate (excl. GST)</th><th class="num">Charge total</th></tr></thead>
+              <tbody>${q.allowances.map((l) => `<tr><td>${l.allowance}</td><td class="num">${l.quantity}</td>${rateTd(l.amount)}<td class="num">${money(l.chargeRate)}</td><td class="num">${money(l.chargeLineTotal)}</td></tr>`).join("")}</tbody>
             </table>`
           : ""
       }
       <div class="totals">
-        <div class="box"><span class="label">Total charge (excl. GST) for this roster</span><span class="value charge">${money(
-          q.roster.reduce((s, l) => s + l.chargeLineTotal, 0) + (q.allowances || []).reduce((s, l) => s + l.chargeLineTotal, 0)
-        )}</span></div>
+        <div class="box"><span class="label">Total charge (excl. GST) for this roster</span><span class="value charge">${money(total)}</span></div>
       </div>
-      <p class="small" style="color:#666">
-        Weighted average across this roster (reference only — not what's charged): award ${money(q.blended_award_rate)}/hr →
-        cost ${money(q.cost_rate)}/hr (+${q.oncost_pct}% on-costs) → charge ${money(q.charge_rate)}/hr (+${q.margin_pct}% margin)
-      </p>
-      <p class="small" style="color:#666">All rates above are exclusive of GST. GST (if applicable) is charged in addition on invoicing.</p>
-      ${q.notes ? `<p><strong>Notes:</strong> ${q.notes}</p>` : ""}
+      ${
+        internal
+          ? `<p class="small" style="color:#666">Weighted average (reference only): award ${money(q.blended_award_rate)}/hr → cost ${money(q.cost_rate)}/hr (+${q.oncost_pct}% on-costs) → charge ${money(q.charge_rate)}/hr (+${q.margin_pct}% margin)</p>`
+          : ""
+      }
+      <p class="small" style="color:#666">All rates are exclusive of GST. GST is charged in addition on invoicing.</p>
+      ${internal && q.notes ? `<p><strong>Internal notes:</strong> ${q.notes}</p>` : ""}
     `;
   });
 </script>

@@ -6,11 +6,23 @@ import { getRateCategories } from "../rates.js";
 import { getAllowanceRows } from "../allowances.js";
 import { getSettings } from "../settings.js";
 
+// Quotes saved before per-category charge rates existed only stored award rates.
+// Derive the charge fields from the quote's own on-cost/margin so old quotes
+// still render (same flat multiplier addChargeRates uses at calculation time).
+function withCharge(lines, rateKey, qtyKey, row) {
+  const markup = (1 + row.oncost_pct / 100) * (1 + (Number(row.margin_pct) || 0) / 100);
+  return lines.map((l) => {
+    if (l.chargeRate != null && l.chargeLineTotal != null) return l;
+    const chargeRate = l[rateKey] * markup;
+    return { ...l, chargeRate, chargeLineTotal: chargeRate * l[qtyKey] };
+  });
+}
+
 function quoteRow(row) {
   return {
     ...row,
-    roster: JSON.parse(row.roster_json),
-    allowances: row.allowances_json ? JSON.parse(row.allowances_json) : [],
+    roster: withCharge(JSON.parse(row.roster_json), "loadedRate", "hours", row),
+    allowances: withCharge(row.allowances_json ? JSON.parse(row.allowances_json) : [], "amount", "quantity", row),
     isCasual: !!row.is_casual,
   };
 }
