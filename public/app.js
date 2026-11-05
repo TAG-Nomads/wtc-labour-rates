@@ -36,7 +36,7 @@ async function init() {
     return;
   }
   $("whoami").textContent = `${ME.name} (${ME.role})`;
-  if (ME.mustChange) $("pwModalWrap").hidden = false;
+  if (ME.mustChange) showPasswordModal(true);
   if (ME.role === "admin" || ME.role === "owner") {
     $("adminCard").hidden = false;
     if (ME.role === "owner") {
@@ -61,18 +61,31 @@ async function init() {
   wireEvents();
 }
 
+// forced = first-login change: no current-password field and no way to dismiss it.
+function showPasswordModal(forced) {
+  $("curPwField").hidden = forced;
+  $("pwCancel").hidden = forced;
+  $("pwErr").innerHTML = "";
+  $("pwModalWrap").hidden = false;
+}
+
 function wireEvents() {
   $("logoutBtn").addEventListener("click", async () => {
     await api("/api/staff/logout", { method: "POST" });
     location.href = "/login.html";
   });
 
-  $("changePwBtn").addEventListener("click", () => ($("pwModalWrap").hidden = false));
+  $("changePwBtn").addEventListener("click", () => showPasswordModal(false));
+  $("pwCancel").addEventListener("click", () => ($("pwModalWrap").hidden = true));
   $("pwSubmit").addEventListener("click", async () => {
     const password = $("newPw").value;
     try {
-      await api("/api/staff/password", { method: "POST", body: JSON.stringify({ password }) });
+      await api("/api/staff/password", { method: "POST", body: JSON.stringify({ password, currentPassword: $("curPw").value }) });
       $("pwModalWrap").hidden = true;
+      $("curPw").value = "";
+      $("newPw").value = "";
+      $("pwErr").innerHTML = "";
+      ME.mustChange = false;
     } catch (e) {
       $("pwErr").innerHTML = `<div class="notice error">${e.message}</div>`;
     }
@@ -770,6 +783,7 @@ async function loadAccounts() {
           </td>
           <td>
             ${canToggle(a) ? `<button type="button" class="link toggle-active-btn" data-id="${a.id}" data-active="${a.active ? 1 : 0}">${a.active ? "Deactivate" : "Reactivate"}</button>` : ""}
+            ${canToggle(a) ? ` <button type="button" class="link set-password-btn" data-id="${a.id}" data-name="${a.name}">Set password</button>` : ""}
             ${canToggle(a) ? ` <button type="button" class="link resend-invite-btn" data-id="${a.id}" data-name="${a.name}">Resend setup link</button>` : ""}
           </td>
         </tr>`
@@ -778,6 +792,9 @@ async function loadAccounts() {
   </table>`;
   document.querySelectorAll(".toggle-active-btn").forEach((btn) => {
     btn.addEventListener("click", () => toggleAccountActive(btn.dataset.id, btn.dataset.active === "1"));
+  });
+  document.querySelectorAll(".set-password-btn").forEach((btn) => {
+    btn.addEventListener("click", () => showSetPasswordForm(btn.dataset.id, btn.dataset.name));
   });
   document.querySelectorAll(".resend-invite-btn").forEach((btn) => {
     btn.addEventListener("click", () => resendInvite(btn.dataset.id, btn.dataset.name));
@@ -810,6 +827,32 @@ async function resendInvite(id, name) {
   }
 }
 
+// Inline form (not prompt()) for an admin/owner to set or reset someone's password.
+function showSetPasswordForm(id, name) {
+  $("newAccountResult").innerHTML = `
+    <div class="notice">
+      Set a new password for <strong>${name}</strong>. Their old password stops working immediately.
+      <div class="row" style="margin-top:8px; align-items:flex-end">
+        <div class="field" style="flex:0 0 260px"><label for="setPwInput">New password (min 8 characters)</label><input type="text" id="setPwInput" autocomplete="off"></div>
+        <div class="field" style="flex:1; min-width:240px"><label style="color:var(--text)"><input type="checkbox" id="setPwForce"> Make them choose their own at next sign-in</label></div>
+        <div class="field" style="flex:0 0 auto"><button type="button" class="primary" id="setPwSave">Set password</button> <button type="button" class="link" id="setPwCancel">Cancel</button></div>
+      </div>
+    </div>`;
+  $("setPwCancel").addEventListener("click", () => ($("newAccountResult").innerHTML = ""));
+  $("setPwSave").addEventListener("click", async () => {
+    try {
+      await api(`/api/staff/accounts/${id}/set-password`, {
+        method: "POST",
+        body: JSON.stringify({ password: $("setPwInput").value, forceChange: $("setPwForce").checked }),
+      });
+      $("newAccountResult").innerHTML = `<div class="notice">Password set for ${name}. Give it to them securely — they can change it any time with <strong>Change password</strong>.</div>`;
+      loadAccounts();
+    } catch (e) {
+      $("newAccountResult").innerHTML += `<div class="notice error mt-8">${e.message}</div>`;
+    }
+  });
+}
+
 async function toggleAccountActive(id, currentlyActive) {
   try {
     await api(`/api/staff/accounts/${id}`, { method: "PATCH", body: JSON.stringify({ active: !currentlyActive }) });
@@ -824,8 +867,22 @@ async function addAccount() {
   const name = $("newName").value.trim();
   const role = $("newRole").value;
   if (!email || !name) return;
+  const password = $("newPassword").value;
   try {
-    const account = await api("/api/staff/accounts", { method: "POST", body: JSON.stringify({ email, name, role }) });
+    const account = await api("/api/staff/accounts", {
+      method: "POST",
+      body: JSON.stringify({ email, name, role, password: password || undefined, forceChange: $("newForceChange").checked }),
+    });
+    if (!account.inviteLink) {
+      // Password set directly -- no link to send.
+      $("newAccountResult").innerHTML = `<div class="notice">Created ${account.name}. They can sign in now with the password you set${$("newForceChange").checked ? " (they'll be asked to choose their own first)" : ""}. Give it to them securely.</div>`;
+      $("newEmail").value = "";
+      $("newName").value = "";
+      $("newPassword").value = "";
+      $("newForceChange").checked = false;
+      loadAccounts();
+      return;
+    }
     const subject = encodeURIComponent("Set up your WTC Labour Rates account");
     const body = encodeURIComponent(
       `Hi ${account.name},\n\nYou've been added to the WTC Labour Rates calculator. Click this link to set your password and sign in:\n\n${account.inviteLink}\n\nThis link expires in 7 days.`

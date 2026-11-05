@@ -96,6 +96,11 @@ export async function handleStaffAuth(request, env, url) {
   if (match("/api/staff/password", pathname) && method === "POST") {
     const body = await request.json().catch(() => ({}));
     if (!body.password || body.password.length < 8) return error("Password must be at least 8 characters");
+    // Changing your own password needs the current one, unless you're in the
+    // forced first-login change (you've just signed in with the password you were given).
+    if (!staff.must_change && !(await verifyPassword(body.currentPassword || "", staff))) {
+      return error("Your current password isn't right", 400);
+    }
     const { salt, hash, iter } = await hashPassword(body.password);
     await env.DB.prepare("UPDATE staff_users SET pw_salt=?, pw_hash=?, pw_iter=?, must_change=0 WHERE id=?")
       .bind(salt, hash, iter, staff.id)
@@ -117,7 +122,19 @@ export async function handleStaffAuth(request, env, url) {
     if (body.role === "admin" && session.role !== "owner") {
       return error("Only an owner can create admin accounts", 403);
     }
-    // Placeholder password nobody knows -- login stays impossible until the invite link is used.
+    // Optional: the admin sets the password directly instead of sending a setup link.
+    if (body.password) {
+      if (String(body.password).length < 8) return error("Password must be at least 8 characters");
+      const pw = await hashPassword(body.password);
+      const created = await env.DB.prepare(
+        `INSERT INTO staff_users (email, name, role, pw_salt, pw_hash, pw_iter, must_change)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`
+      )
+        .bind(body.email.trim().toLowerCase(), body.name, body.role, pw.salt, pw.hash, pw.iter, body.forceChange ? 1 : 0)
+        .first();
+      return json(staffRow(created), 201);
+    }
+    // Otherwise: placeholder password nobody knows -- login stays impossible until the invite link is used.
     const { salt, hash, iter } = await hashPassword(crypto.randomUUID());
     const { token, hash: inviteHash, expiresAt } = await createInviteToken();
     const row = await env.DB.prepare(
@@ -130,7 +147,33 @@ export async function handleStaffAuth(request, env, url) {
     return json({ ...staffRow(row), inviteLink }, 201);
   }
 
-  let m = match("/api/staff/accounts/:id/resend-invite", pathname);
+  // Admin/owner sets (or resets) someone else's password directly. Same reach as
+  // the other account actions: admins -> staff only, owner -> staff and admins,
+  // nobody -> owners (they change their own via the current-password route).
+  let m = match("/api/staff/accounts/:id/set-password", pathname);
+  if (m && method === "POST") {
+    if (!requireRole(session, ["admin", "owner"])) return error("Forbidden", 403);
+    const target = await env.DB.prepare("SELECT * FROM staff_users WHERE id = ?").bind(m.id).first();
+    if (!target) return error("Not found", 404);
+    if (target.role === "owner") return error("Owner accounts can't be modified here", 403);
+    if (target.id === session.id) return error("Change your own password with 'Change password' (it asks for your current one)", 400);
+    if (session.role === "admin" && target.role !== "staff") {
+      return error("Admins can only set passwords for staff-level accounts", 403);
+    }
+    const body = await request.json().catch(() => ({}));
+    if (!body.password || String(body.password).length < 8) return error("Password must be at least 8 characters");
+    const pw = await hashPassword(body.password);
+    // Clears any pending setup link so the old link can't override the new password.
+    const row = await env.DB.prepare(
+      `UPDATE staff_users SET pw_salt=?, pw_hash=?, pw_iter=?, must_change=?, invite_token_hash=NULL, invite_expires_at=NULL
+       WHERE id=? RETURNING *`
+    )
+      .bind(pw.salt, pw.hash, pw.iter, body.forceChange ? 1 : 0, m.id)
+      .first();
+    return json(staffRow(row));
+  }
+
+  m = match("/api/staff/accounts/:id/resend-invite", pathname);
   if (m && method === "POST") {
     if (!requireRole(session, ["admin", "owner"])) return error("Forbidden", 403);
     const target = await env.DB.prepare("SELECT * FROM staff_users WHERE id = ?").bind(m.id).first();

@@ -143,6 +143,16 @@
         <select id="newRole"><option value="staff">Staff</option></select>
       </div>
     </div>
+    <div class="row">
+      <div class="field" style="flex:0 0 300px">
+        <label for="newPassword">Password (optional — leave blank to create a setup link instead)</label>
+        <input type="text" id="newPassword" autocomplete="off" placeholder="min 8 characters">
+      </div>
+      <div class="field" style="flex:1; min-width:240px; padding-top:20px">
+        <label style="color:var(--text)"><input type="checkbox" id="newForceChange"> Make them choose their own at first sign-in</label>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:-6px">Whichever you use, they can change their own password any time with <strong>Change password</strong>, and you can set a new one for them from the list above.</p>
     <button id="addAccountBtn">Add account</button>
     <div id="newAccountResult" class="mt-8"></div>
   </div>
@@ -167,9 +177,11 @@
 <div id="pwModalWrap" class="modal-wrap" hidden>
   <div class="card" style="width:340px">
     <h2 style="margin-bottom:14px">Set a new password</h2>
-    <div class="field"><label for="newPw">New password (min 8 characters)</label><input type="password" id="newPw"></div>
+    <div class="field" id="curPwField"><label for="curPw">Current password</label><input type="password" id="curPw" autocomplete="current-password"></div>
+    <div class="field"><label for="newPw">New password (min 8 characters)</label><input type="password" id="newPw" autocomplete="new-password"></div>
     <div id="pwErr"></div>
     <button class="primary" id="pwSubmit" style="width:100%">Update password</button>
+    <button class="link" id="pwCancel" style="margin-top:10px">Cancel</button>
   </div>
 </div>
 
