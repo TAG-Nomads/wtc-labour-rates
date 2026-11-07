@@ -7,8 +7,10 @@ Internal tool for Work + Travel Co. staff to work out the award pay rate for a r
 charge rate on top: on-costs (super/payroll tax/WorkCover, floored at 22.7%) + a
 variable margin (default 15%). Saves quotes and produces a printable summary.
 
-Pay data source: the Fair Work Modern Awards Pay (MAP) database export snapshotted
-2026-08-13 (155 awards), loaded into D1 via `scripts/build_seed.py`. Casual loading
+Pay data source: the Fair Work Commission's Modern Awards Pay Database, pulled from its
+API on 2026-11-08 (156 awards) with `scripts/fetch_map_api.py` + `scripts/build_seed_api.py`
+(see "Refreshing the award data" below). Before that it was a manual spreadsheet export
+snapshotted 2026-08-13 (`scripts/build_seed.py`, kept for reference). Casual loading
 percentages for the ~96 awards without an official casual pay table in that export
 were extracted 2026-08-13 by fetching each award's own casual-employment clause from
 awards.fairwork.gov.au — see `scripts/casual_loading_data.py` for the per-award figures,
@@ -56,9 +58,30 @@ npm install --no-save wrangler   # or use npx as below
   return "no rate categories found."
 - On-cost floor (22.7%) and default margin (15%) are enforced/defaulted in
   `worker/calc.js` — change there if the business changes these figures.
-- Everything is a **snapshot dated 2026-08-13** (see `README.md` / `manifest.json` from
-  the original data delivery). Awards get updated at least annually (1 July wage review) —
-  re-run the seed pipeline against a fresh MAP export periodically.
+- Everything is a **snapshot dated 2026-11-08**. Awards get updated at least annually
+  (1 July wage review) and occasionally mid-year — refresh periodically (below).
+
+## Refreshing the award data
+
+Needs an API key for the Fair Work Modern Awards API (https://developer.fwc.gov.au),
+in `FWC_API_KEY` or the first line of `scripts/.fwc_api_key` (gitignored — never commit it).
+
+1. `python scripts/fetch_map_api.py` — pulls current rows for every award into `scripts/.api_cache/`
+   (gitignored; delete it first to force a full refetch; ~15 min). The API's paging is unstable
+   (rows repeat/vanish), so the script repeats each pass with different page sizes until stable.
+2. `python scripts/build_seed_api.py` — writes staged SQL to `seed_api/` (picks the newest version when the
+   API leaves two open, prefers the hourly rate row, repairs the API's mojibake text).
+3. `python scripts/compare_seeds.py` — diff of staged vs `seed/`: rate changes, new/removed classifications,
+   allowances. Read it before going on; existing hourly rates should show 0% change except real updates.
+4. Apply to local, run `node scripts/test_roster_engine.mjs`, then to remote one table at a time:
+   `npx wrangler d1 execute wtc-labour-rates --remote --yes --file=seed_api/<file>.sql` for
+   `apply_awards` (an upsert, so the casual-loading columns on `awards` survive), then
+   `02_classifications`, `03_penalty_rates`, `04_wage_allowances`, `05_expense_allowances`.
+5. Copy `seed_api/0[1-5]*.sql` over `seed/` and commit.
+
+Known gaps in API data: penalty rows have no clause reference (`clauses` is NULL; the UI falls back to the
+clause description), and a new award has no casual-loading entry until added to `casual_loading_data.py`
+(MA000037 Quarrying currently has none).
 
 ## Future: labour hire agreement generation
 

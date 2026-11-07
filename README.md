@@ -16,13 +16,14 @@ Cloudflare Worker + D1, plain JS, no build step, no framework — matches the ho
 - `worker/rates.js` — the casual/permanent rate-category split (single source of truth, used by both the lookup route and the quote calculator so a loading can never be applied twice).
 - `worker/calc.js` — pure rate build-up math (blend roster hours × category rates → on-costs → margin).
 - `migrations/` — D1 schema. `seed/` — generated award data (see below), not hand-written.
-- `scripts/build_seed.py` — converts the Fair Work MAP database export spreadsheets into `seed/*.sql`.
+- `scripts/fetch_map_api.py`, `scripts/build_seed_api.py`, `scripts/compare_seeds.py` — pull the Fair Work Modern Awards API, build/compare the seed SQL (see `SETUP.md`, "Refreshing the award data").
+- `scripts/build_seed.py` — the earlier route: converts manually downloaded MAP spreadsheet exports into `seed/*.sql`.
 - `scripts/casual_loading_data.py` — per-award casual loading % + source clause, for awards with no official casual pay table in the export.
 - `public/` — login page, main app (award picker, roster, calculator, quote history, admin accounts), printable quote page.
 
 ## Data source
 
-Fair Work Modern Awards Pay (MAP) database export, snapshot dated 2026-08-13 (155 awards). See `SETUP.md` for the known gaps in this data (non-standard casual loadings, awards with no penalty-rate rows at all) before relying on this for real quotes.
+Fair Work Modern Awards Pay Database via the Commission's API, pulled 2026-11-08 (156 awards). See `SETUP.md` for the known gaps in this data (non-standard casual loadings, awards with no penalty-rate rows at all) before relying on this for real quotes.
 
 ## Local dev
 

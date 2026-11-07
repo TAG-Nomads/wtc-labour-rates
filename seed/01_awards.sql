@@ -36,6 +36,7 @@ INSERT INTO awards (award_code, name, operative_from, source_url, consolidated_t
 ('MA000034', 'Nurses Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000034.html', '1 August 2026'),
 ('MA000035', 'Pastoral Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000035.html', '1 July 2026'),
 ('MA000036', 'Plumbing and Fire Sprinklers Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000036.html', '1 July 2026'),
+('MA000037', 'Quarrying Award 2010', '2010-01-01', NULL, NULL),
 ('MA000038', 'Road Transport and Distribution Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000038.html', '1 July 2026'),
 ('MA000039', 'Road Transport (Long Distance Operations) Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000039.html', '1 July 2026'),
 ('MA000040', 'Silviculture Award 2020', '2010-01-01', 'https://awards.fairwork.gov.au/MA000040.html', '1 July 2026'),

@@ -4,3 +4,7 @@ node_modules/
 *.log
 __pycache__/
 scripts/award_chunks.json
+scripts/.fwc_api_key
+scripts/.api_cache/
+scripts/.api_cache_v1_unstable/
+seed_api/
