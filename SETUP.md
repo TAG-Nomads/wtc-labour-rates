@@ -79,6 +79,25 @@ in `FWC_API_KEY` or the first line of `scripts/.fwc_api_key` (gitignored — nev
    `02_classifications`, `03_penalty_rates`, `04_wage_allowances`, `05_expense_allowances`.
 5. Copy `seed_api/0[1-5]*.sql` over `seed/` and commit.
 
+### Change notifications (webhooks)
+
+Fair Work calls `POST /api/webhooks/fwc/<token>` when award data changes (`worker/routes/fwcWebhook.js`).
+The receiver only records *that* something changed (per day/kind in `fwc_change_events`, per award code in
+`fwc_change_awards` — migration 0008); it does not reload data by itself. Admins/owners then see an
+"award rates changed" banner on the main page listing the affected awards until they refresh the data (steps
+above) and click **Mark as refreshed**.
+
+- Six subscriptions exist on the API (AllAwards, AllClassifications, AllPayRates, AllPenalties,
+  AllWageAllowances, AllExpenseAllowances), all pointing at the receiver. List/manage them with
+  `GET/DELETE https://api.fwc.gov.au/api/v1/subscriptions[/<webhook_fixed_id>]` (same key header).
+  Creating one triggers a handshake: FWC POSTs `{message_type:"HANDSHAKE", webhook_fixed_id}` and the receiver echoes it back.
+- Worker secrets: `FWC_WEBHOOK_TOKEN` (the secret in the callback URL — also in `.dev.vars` for local testing) and
+  `FWC_CALLBACK_SECRETS` (JSON map of subscription id -> FWC's per-subscription callback_secret, unused so far).
+- The signature scheme for deliveries isn't documented. The receiver keeps the headers + body of the latest
+  delivery per kind in `fwc_change_events.sample`; once a real one has arrived, use it to add signature checking
+  with `FWC_CALLBACK_SECRETS`. Until then the URL token is the only check (the endpoint only increments counters).
+- Per FWC, notifications go out when a change takes effect, so expect them around 1 July and award variations.
+
 Known gaps in API data: penalty rows have no clause reference (`clauses` is NULL; the UI falls back to the
 clause description), and a new award has no casual-loading entry until added to `casual_loading_data.py`
 (MA000037 Quarrying currently has none).

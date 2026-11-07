@@ -1,6 +1,8 @@
 import { handleStaffAuth } from "./routes/staff.js";
 import { handleAwards } from "./routes/awards.js";
 import { handleQuotes } from "./routes/quotes.js";
+import { handleFwcWebhook } from "./routes/fwcWebhook.js";
+import { handleDataChanges } from "./routes/dataChanges.js";
 
 export default {
   async fetch(request, env) {
@@ -17,6 +19,14 @@ export default {
       pathname.startsWith("/api/staff/settings")
     ) {
       return handleStaffAuth(request, env, url);
+    }
+
+    if (pathname.startsWith("/api/webhooks/fwc")) {
+      return handleFwcWebhook(request, env, url);
+    }
+
+    if (pathname.startsWith("/api/staff/data-changes")) {
+      return handleDataChanges(request, env, url);
     }
 
     if (pathname.startsWith("/api/staff/awards") || pathname.startsWith("/api/staff/rates")) {

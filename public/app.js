@@ -43,6 +43,7 @@ async function init() {
       $("newRole").innerHTML = `<option value="staff">Staff</option><option value="admin">Admin</option>`;
     }
     loadAccounts();
+    loadDataChanges();
   }
   if (ME.role === "owner") {
     $("settingsCard").hidden = false;
@@ -110,6 +111,34 @@ function wireEvents() {
   $("addAccountBtn").addEventListener("click", addAccount);
   $("saveSettingsBtn").addEventListener("click", saveSettings);
   wireShiftEvents();
+}
+
+// Fair Work told us (via its change-notification webhook) that award data has changed since the
+// last refresh. Shown to admins/owners until someone marks the data as refreshed.
+async function loadDataChanges() {
+  let d;
+  try {
+    d = await api("/api/staff/data-changes");
+  } catch {
+    return;
+  }
+  if (!d.pending) {
+    $("dataChangeNotice").innerHTML = "";
+    return;
+  }
+  const last = d.events.map((e) => e.last_at).sort().pop();
+  const awardList = d.awards.length
+    ? `Affected awards: ${d.awards.map((a) => esc(`${a.award_code}${a.name ? ` ${a.name}` : ""}`)).join("; ")}.`
+    : "The notification didn't name specific awards.";
+  $("dataChangeNotice").innerHTML = `<div class="notice warn">
+    <strong>Fair Work reported changes to award rates or conditions</strong> (latest ${new Date(last).toLocaleString()}).
+    The rates in this tool may be out of date until the award data is refreshed. ${awardList}
+    <div class="mt-8"><button type="button" id="ackDataChanges">Mark as refreshed</button></div>
+  </div>`;
+  $("ackDataChanges").addEventListener("click", async () => {
+    await api("/api/staff/data-changes/ack", { method: "POST" });
+    loadDataChanges();
+  });
 }
 
 async function saveSettings() {
