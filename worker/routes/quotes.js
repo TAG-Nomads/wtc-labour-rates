@@ -294,7 +294,7 @@ async function computeQuote(request, env) {
 
   let costAndCharge;
   try {
-    costAndCharge = applyOncostAndMargin(withAllowances.blendedAwardRate, oncostPct, marginPct, settings.oncostFloorPct, settings.marginFloorPct);
+    costAndCharge = applyOncostAndMargin(withAllowances.blendedAwardRate, oncostPct, marginPct, settings.oncostFloorPct);
   } catch (e) {
     return error(e.message, 400);
   }

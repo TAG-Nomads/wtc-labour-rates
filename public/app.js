@@ -81,10 +81,8 @@ async function init() {
   $("oncostPct").value = SETTINGS.oncostFloorPct;
   $("oncostPct").min = SETTINGS.oncostFloorPct;
   $("marginPct").value = SETTINGS.defaultMarginPct;
-  applyMarginFloor();
   $("settingOncostFloor").value = SETTINGS.oncostFloorPct;
   $("settingDefaultMargin").value = SETTINGS.defaultMarginPct;
-  $("settingMarginFloor").value = SETTINGS.marginFloorPct;
 
   AWARDS = await api("/api/staff/awards");
   loadHistory();
@@ -171,12 +169,6 @@ async function loadDataChanges() {
   });
 }
 
-// Staff can lower the margin from the default, but not below the owner's floor.
-function applyMarginFloor() {
-  $("marginPct").min = SETTINGS.marginFloorPct;
-  $("marginFloorHint").textContent = `(minimum ${SETTINGS.marginFloorPct}%)`;
-}
-
 const optNum = (id) => {
   const v = $(id).value;
   return v === "" || isNaN(parseFloat(v)) ? undefined : parseFloat(v);
@@ -189,10 +181,8 @@ async function saveSettings() {
       body: JSON.stringify({
         oncostFloorPct: parseFloat($("settingOncostFloor").value),
         defaultMarginPct: parseFloat($("settingDefaultMargin").value),
-        marginFloorPct: parseFloat($("settingMarginFloor").value),
       }),
     });
-    applyMarginFloor();
     $("oncostPct").min = SETTINGS.oncostFloorPct;
     $("settingsResult").innerHTML = `<div class="notice">Saved. New quotes will use these as the default.</div>`;
   } catch (e) {

@@ -8,8 +8,6 @@ export const FALLBACK_DEFAULT_MARGIN_PCT = 15;
 
 import { scopeConflict } from "./penalties.js";
 
-export const FALLBACK_MARGIN_FLOOR_PCT = 8;
-
 const isOvertimeClause = (clauseDescription) => /overtime/i.test(clauseDescription || "");
 
 // roster: [{ penaltyDescription, hours }], rateRows: penalty_rates rows for the
@@ -113,12 +111,9 @@ export function applyAllowances(selections, allowanceRows, rosterLines, totalPay
   return { lines, allowanceTotal, totalPay: newTotalPay, blendedAwardRate: totalHours > 0 ? newTotalPay / totalHours : 0 };
 }
 
-export function applyOncostAndMargin(blendedAwardRate, oncostPct, marginPct, oncostFloorPct, marginFloorPct = 0) {
+export function applyOncostAndMargin(blendedAwardRate, oncostPct, marginPct, oncostFloorPct) {
   if (oncostPct < oncostFloorPct) {
     throw new Error(`On-cost % cannot be below the ${oncostFloorPct}% floor (super + payroll tax + WorkCover)`);
-  }
-  if ((Number(marginPct) || 0) < marginFloorPct) {
-    throw new Error(`Margin % cannot be below the ${marginFloorPct}% minimum set by the business`);
   }
   const costRate = blendedAwardRate * (1 + oncostPct / 100);
   const chargeRate = costRate * (1 + (Number(marginPct) || 0) / 100);

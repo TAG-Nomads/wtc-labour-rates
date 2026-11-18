@@ -77,16 +77,15 @@ check("order: penalty lines sit right after their base line", folded.lines.map((
 const all = foldHourlyPenalties(blended.lines, [{ allowance: EVE, quantity: 10, amount: 2.95, unit: "per hour or part thereof", appliesToCategory: "Ordinary hours" }]);
 check("a category fully covered by a penalty has no plain line left", !all.lines.some((l) => l.penaltyDescription === "Ordinary hours"));
 
-// --- margin floor
+// --- margin is free to set (no floor); the on-cost floor still applies
+check("any margin is accepted, including below 8%", applyOncostAndMargin(40, 22.7, 5, 22.7).chargeRate > 40 && near(applyOncostAndMargin(40, 22.7, 0, 22.7).chargeRate, 40 * 1.227));
 let e2 = null;
 try {
-  applyOncostAndMargin(40, 22.7, 7.9, 22.7, 8);
+  applyOncostAndMargin(40, 20, 15, 22.7);
 } catch (e) {
   e2 = e.message;
 }
-check("margin below the floor is refused", !!e2 && /8%/.test(e2), e2);
-check("margin at the floor is allowed", applyOncostAndMargin(40, 22.7, 8, 22.7, 8).chargeRate > 40);
-check("above the floor is allowed", applyOncostAndMargin(40, 22.7, 15, 22.7, 8).chargeRate > applyOncostAndMargin(40, 22.7, 8, 22.7, 8).chargeRate);
+check("on-cost floor is still enforced", !!e2 && /22\.7%/.test(e2), e2);
 
 console.log(failed ? `\n${failed} FAILED` : "\nAll passed");
 process.exit(failed ? 1 : 0);
