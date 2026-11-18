@@ -67,7 +67,7 @@
           <input type="number" id="oncostPct" step="0.01" value="22.7" min="22.7">
         </div>
         <div class="field" style="flex: 0 0 160px">
-          <label for="marginPct">Margin %</label>
+          <label for="marginPct">Margin % <span class="small muted" id="marginFloorHint"></span></label>
           <input type="number" id="marginPct" step="0.01" value="15">
         </div>
       </div>
@@ -93,7 +93,6 @@
         <div id="shiftError"></div>
         <button type="button" id="addStaffBtn">+ Add another staff roster</button>
         <div class="row" style="margin-top:14px">
-          <div class="field" style="flex:0 0 200px"><label for="dailyCap">Daily ordinary-hours cap</label><input type="number" id="dailyCap" min="1" max="24" step="0.25"></div>
           <div class="field" id="retailOptions" hidden style="flex:1; min-width:260px">
             <label style="color:var(--text)"><input type="checkbox" id="optShiftworker"> Employed as a shiftworker (cl 23–25)</label>
             <label style="color:var(--text)"><input type="checkbox" id="optLateTrading"> Host trades past 9pm weekdays / 6pm weekends (span to 11pm, cl 15.2)</label>
@@ -107,6 +106,18 @@
       <div id="rosterSection"></div>
 
       <div id="allowancesSection"></div>
+
+      <div class="row mt-8">
+        <div class="field" style="flex:0 0 250px">
+          <label for="minEngagement">Minimum engagement (hours per shift)</label>
+          <input type="number" id="minEngagement" min="0" max="24" step="0.25" placeholder="not specified">
+        </div>
+        <div class="field" style="flex:0 0 290px">
+          <label for="dailyCap">Ordinary hours per day before overtime</label>
+          <input type="number" id="dailyCap" min="1" max="24" step="0.25" placeholder="not specified">
+        </div>
+        <div class="field" style="flex:1; min-width:240px"><p class="small muted" id="termsNote" style="margin:22px 0 0"></p></div>
+      </div>
 
       <div class="field mt-8">
         <label for="notes">Notes (optional)</label>
@@ -163,6 +174,10 @@
       <div class="field" style="flex:0 0 200px">
         <label for="settingDefaultMargin">Default margin %</label>
         <input type="number" id="settingDefaultMargin" step="0.01" min="0">
+      </div>
+      <div class="field" style="flex:0 0 220px">
+        <label for="settingMarginFloor">Margin floor % (lowest staff can quote)</label>
+        <input type="number" id="settingMarginFloor" step="0.01" min="0">
       </div>
     </div>
     <button id="saveSettingsBtn">Save settings</button>

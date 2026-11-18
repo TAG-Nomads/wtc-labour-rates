@@ -72,10 +72,11 @@ export const SUPPORTED_AWARDS = {
   MA000004: {
     name: "General Retail Industry Award 2020",
     dailyCap: 9,
-    options: ["shiftworker", "lateTrading", "dailyCapHours"],
+    minEngagement: 3,
+    options: ["shiftworker", "lateTrading", "dailyCapHours", "minEngagementHours"],
   },
-  MA000009: { name: "Hospitality Industry (General) Award 2020", dailyCap: 12, options: ["dailyCapHours"] },
-  MA000084: { name: "Storage Services and Wholesale Award 2020", dailyCap: 8, options: ["dailyCapHours"] },
+  MA000009: { name: "Hospitality Industry (General) Award 2020", dailyCap: 12, minEngagement: 2, options: ["dailyCapHours", "minEngagementHours"] },
+  MA000084: { name: "Storage Services and Wholesale Award 2020", dailyCap: 8, minEngagement: 4, options: ["dailyCapHours", "minEngagementHours"] },
 };
 
 export const isSupported = (awardCode) => Object.prototype.hasOwnProperty.call(SUPPORTED_AWARDS, awardCode);
@@ -145,6 +146,12 @@ export function costShifts({ awardCode, baseCents, shifts, publicHolidays = [], 
   const rateByLabel = new Map(table.map((r) => [r.penalty_description, r]));
   const ph = new Set((publicHolidays || []).map(Number));
   const cap = Math.round((Number(options.dailyCapHours) || DEFAULT_DAILY_CAP[awardCode]) * MIN);
+  // The award's minimum engagement unless the quote overrides it (0 = no minimum).
+  const minEngOpt = options.minEngagementHours;
+  const minEngagementMin =
+    minEngOpt !== undefined && minEngOpt !== null && minEngOpt !== "" && Number(minEngOpt) >= 0
+      ? Math.round(Number(minEngOpt) * MIN)
+      : MIN_ENGAGEMENT[awardCode];
   const weeklyCap = 38 * MIN;
   const norm = normaliseShifts(shifts);
 
@@ -305,8 +312,8 @@ export function costShifts({ awardCode, baseCents, shifts, publicHolidays = [], 
     }
 
     // Minimum engagement top-up, paid at the rate the shift started in.
-    const minEng = MIN_ENGAGEMENT[awardCode];
-    if (workedMin > 0 && workedMin < minEng) {
+    const minEng = minEngagementMin;
+    if (minEng > 0 && workedMin > 0 && workedMin < minEng) {
       const short = minEng - workedMin;
       segs.set(firstLabel, (segs.get(firstLabel) || 0) + short);
       totals.set(firstLabel, (totals.get(firstLabel) || 0) + short);

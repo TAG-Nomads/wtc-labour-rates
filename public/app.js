@@ -15,6 +15,34 @@ const isOvertimeClause = (clauseDescription) => /overtime/i.test(clauseDescripti
 const isHourlyAllowance = (paymentFrequency) => /hour/i.test(paymentFrequency || "");
 const otBadge = (isOvertime) => (isOvertime ? '<span class="pill" style="color:var(--amber);border-color:var(--amber);margin-left:6px">OT</span>' : "");
 
+// --- hourly penalties (mirrors worker/penalties.js) ---
+// Some awards pay a flat $/hour penalty for evening/night hours (e.g. Hospitality 7pm-midnight). They're quoted as their
+// own hourly rate (ordinary rate + penalty), so the roster table shows them as rows under the ordinary category.
+const WEEKEND_OR_PH = /saturday|sunday|public holiday|weekend/i;
+const isHourlyPenalty = (name, frequency) => /penalty/i.test(name || "") && /hour/i.test(frequency || "");
+function allowanceScope(name) {
+  const n = name || "";
+  if (/monday/i.test(n)) return "weekday";
+  if (/saturday/i.test(n) && !/sunday|public holiday/i.test(n)) return "saturday";
+  if (/sunday|public holiday/i.test(n)) return "sunday";
+  return "any";
+}
+const scopeConflict = (allowanceName, categoryName) => allowanceScope(allowanceName) === "weekday" && WEEKEND_OR_PH.test(categoryName || "");
+function baseCategoryFor(allowanceName, categories) {
+  const scope = allowanceScope(allowanceName);
+  const fits = (c) => {
+    if (c.isOvertime) return false;
+    if (scope === "weekday") return !WEEKEND_OR_PH.test(c.name);
+    if (scope === "saturday") return /saturday/i.test(c.name);
+    if (scope === "sunday") return /sunday|public holiday/i.test(c.name);
+    return false;
+  };
+  const hit = categories.find(fits);
+  return hit ? hit.name : null;
+}
+const penaltyRowLabel = (categoryName, allowanceName) =>
+  `${categoryName} + penalty (${String(allowanceName).replace(/^(early work |late work )?penalty\s*[—-]\s*/i, "").replace(/\s*—\s*/g, ", ")})`;
+
 async function api(path, opts) {
   const res = await fetch(path, {
     ...opts,
@@ -53,8 +81,10 @@ async function init() {
   $("oncostPct").value = SETTINGS.oncostFloorPct;
   $("oncostPct").min = SETTINGS.oncostFloorPct;
   $("marginPct").value = SETTINGS.defaultMarginPct;
+  applyMarginFloor();
   $("settingOncostFloor").value = SETTINGS.oncostFloorPct;
   $("settingDefaultMargin").value = SETTINGS.defaultMarginPct;
+  $("settingMarginFloor").value = SETTINGS.marginFloorPct;
 
   AWARDS = await api("/api/staff/awards");
   loadHistory();
@@ -141,6 +171,17 @@ async function loadDataChanges() {
   });
 }
 
+// Staff can lower the margin from the default, but not below the owner's floor.
+function applyMarginFloor() {
+  $("marginPct").min = SETTINGS.marginFloorPct;
+  $("marginFloorHint").textContent = `(minimum ${SETTINGS.marginFloorPct}%)`;
+}
+
+const optNum = (id) => {
+  const v = $(id).value;
+  return v === "" || isNaN(parseFloat(v)) ? undefined : parseFloat(v);
+};
+
 async function saveSettings() {
   try {
     SETTINGS = await api("/api/staff/settings", {
@@ -148,8 +189,10 @@ async function saveSettings() {
       body: JSON.stringify({
         oncostFloorPct: parseFloat($("settingOncostFloor").value),
         defaultMarginPct: parseFloat($("settingDefaultMargin").value),
+        marginFloorPct: parseFloat($("settingMarginFloor").value),
       }),
     });
+    applyMarginFloor();
     $("oncostPct").min = SETTINGS.oncostFloorPct;
     $("settingsResult").innerHTML = `<div class="notice">Saved. New quotes will use these as the default.</div>`;
   } catch (e) {
@@ -266,7 +309,23 @@ function collectRosterHoursByCategory() {
     const cat = RATE_CATEGORIES[Number(input.dataset.idx)];
     if (cat && input.value) map[cat.penalty_description] = input.value;
   });
+  document.querySelectorAll(".penalty-hours").forEach((input) => {
+    if (input.value) map[`pen:${input.dataset.allowance}`] = input.value;
+  });
   return map;
+}
+
+// Hourly penalty allowances that are shown as hourly-rate rows instead of in the allowance list:
+// Map(allowance name -> { allowance row, base category name }).
+function foldablePenalties() {
+  const out = new Map();
+  const cats = RATE_CATEGORIES.map((r) => ({ name: r.penalty_description, isOvertime: isOvertimeClause(r.clause_description) }));
+  for (const a of [...ALLOWANCES.common, ...ALLOWANCES.other]) {
+    if (!isHourlyPenalty(a.allowance, a.payment_frequency)) continue;
+    const base = baseCategoryFor(a.allowance, cats);
+    if (base) out.set(a.allowance, { allowance: a, base });
+  }
+  return out;
 }
 
 // Ordinary-hours roster categories with hours currently entered -- the only
@@ -310,7 +369,7 @@ let note = `<div class="notice warn">
     ordinary/overtime split from the award's own hours-of-work and overtime clauses (or ask before
     quoting if unsure), then enter the hours against the matching category below.<br>
     Working very early or very late does <em>not</em> automatically mean overtime in most awards —
-    that's usually a separate penalty, shown under "Allowances" below if this award has one.
+    that's usually a separate penalty, shown as an indented penalty row in the table below (or under "Allowances" below) if this award has one.
     ${SELECTED_AWARD.source_url ? `<a href="${SELECTED_AWARD.source_url}" target="_blank">Open the full award text ↗</a>` : ""}
   </div>`;
   if ($("isCasual").checked) {
@@ -324,32 +383,47 @@ let note = `<div class="notice warn">
     renderAllowances();
     return;
   }
+  const penalties = foldablePenalties();
   section.innerHTML = `
     ${note}
     <label class="mt-8">Roster — enter hours worked in each applicable pay category. <span class="pill" style="color:var(--amber);border-color:var(--amber)">OT</span> marks overtime-rate categories.</label>
     <table>
       <thead><tr><th>Category</th><th>Clause</th><th class="num">Rate ($/hr)</th><th class="num" style="width:110px">Hours</th></tr></thead>
       <tbody>
-        ${RATE_CATEGORIES.map(
-          (r, i) => `<tr>
+        ${RATE_CATEGORIES.map((r, i) => {
+          const penaltyRows = [...penalties.values()]
+            .filter((f) => f.base === r.penalty_description)
+            .map(
+              (f) => `<tr>
+            <td style="padding-left:22px">${esc(penaltyRowLabel(r.penalty_description, f.allowance.allowance))}</td>
+            <td class="muted small">Hourly penalty on top of the rate above (${money(f.allowance.allowance_amount)}/hr)</td>
+            <td class="num">${money(r.calculated_value + f.allowance.allowance_amount)}</td>
+            <td class="num"><input type="number" min="0" step="0.25" class="penalty-hours" data-allowance="${esc(f.allowance.allowance)}" data-base="${esc(r.penalty_description)}" value="${priorHours[`pen:${f.allowance.allowance}`] || ""}" style="text-align:right"></td>
+          </tr>`
+            )
+            .join("");
+          return `<tr>
             <td>${r.penalty_description}${otBadge(isOvertimeClause(r.clause_description))}</td>
             <td class="muted small">${r.clauses || r.clause_description || ""}</td>
             <td class="num">${money(r.calculated_value)}</td>
             <td class="num"><input type="number" min="0" step="0.25" class="roster-hours" data-idx="${i}" value="${priorHours[r.penalty_description] || ""}" style="text-align:right"></td>
-          </tr>`
-        ).join("")}
+          </tr>${penaltyRows}`;
+        }).join("")}
       </tbody>
     </table>
+    ${penalties.size ? `<p class="small muted">Hours in an indented penalty row are separate from the hours in the row above it — don't count them twice.</p>` : ""}
   `;
-  document.querySelectorAll(".roster-hours").forEach((input) => {
+  document.querySelectorAll(".roster-hours, .penalty-hours").forEach((input) => {
     input.addEventListener("input", () => renderAllowances(collectAllowancePriorState()));
   });
   renderAllowances(collectAllowancePriorState());
 }
 
-function allowanceRow(a, i, listName, eligible, prior) {
+function allowanceRow(a, i, listName, allEligible, prior) {
   prior = prior || {};
   const hourly = isHourlyAllowance(a.payment_frequency);
+  // A Monday-to-Friday penalty can't be attached to Saturday, Sunday or public-holiday hours.
+  const eligible = allEligible.filter((c) => !scopeConflict(a.allowance, c.penaltyDescription));
   const qtyCell = hourly
     ? eligible.length
       ? `<select class="allowance-category" data-list="${listName}" data-idx="${i}">
@@ -386,25 +460,35 @@ function renderAllowances(priorSelections) {
   }
   const eligible = eligibleOrdinaryCategories();
   const otherVisible = !document.getElementById("otherAllowancesTable") || !document.getElementById("otherAllowancesTable").hidden;
+  // Hourly penalties live in the hourly-rates table (see renderRoster); list the rest here. Row indexes stay those of
+  // the full lists because collectAllowances() reads them back by index.
+  const folded = foldablePenalties();
+  const rowsFor = (list, name) => list.map((a, i) => (folded.has(a.allowance) ? "" : allowanceRow(a, i, name, eligible, priorSelections[a.allowance]))).join("");
+  const commonCount = ALLOWANCES.common.filter((a) => !folded.has(a.allowance)).length;
+  const otherCount = ALLOWANCES.other.filter((a) => !folded.has(a.allowance)).length;
+  if (!commonCount && !otherCount) {
+    section.innerHTML = "";
+    return;
+  }
   section.innerHTML = `
     <label class="mt-8">Allowances for this award (optional) — enter a quantity for any that apply to this roster.${
-      shiftModeActive() ? " Allowances the shift calculator works out itself (e.g. Hospitality evening/night add-ons) are added automatically — only add others here." : ""
+      folded.size ? " Evening/night penalties are quoted as hourly rates in the roster table above, not here." : ""
     }</label>
     ${
-      ALLOWANCES.common.length
+      commonCount
         ? `<table>
             <thead><tr><th>Allowance</th><th>Rate</th><th class="num" style="width:220px">Qty</th></tr></thead>
-            <tbody>${ALLOWANCES.common.map((a, i) => allowanceRow(a, i, "common", eligible, priorSelections[a.allowance])).join("")}</tbody>
+            <tbody>${rowsFor(ALLOWANCES.common, "common")}</tbody>
           </table>`
         : ""
     }
     ${
-      ALLOWANCES.other.length
-        ? `<button type="button" class="link mt-8" id="toggleOtherAllowancesBtn">${otherVisible ? "Hide" : "Show"} ${ALLOWANCES.other.length} other allowance(s) for this award</button>
+      otherCount
+        ? `<button type="button" class="link mt-8" id="toggleOtherAllowancesBtn">${otherVisible ? "Hide" : "Show"} ${otherCount} other allowance(s) for this award</button>
            <div id="otherAllowancesTable" ${otherVisible ? "" : "hidden"}>
              <table>
                <thead><tr><th>Allowance</th><th>Rate</th><th class="num" style="width:220px">Qty</th></tr></thead>
-               <tbody>${ALLOWANCES.other.map((a, i) => allowanceRow(a, i, "other", eligible, priorSelections[a.allowance])).join("")}</tbody>
+               <tbody>${rowsFor(ALLOWANCES.other, "other")}</tbody>
              </table>
            </div>`
         : ""
@@ -415,7 +499,7 @@ function renderAllowances(priorSelections) {
     toggleBtn.addEventListener("click", () => {
       const table = document.getElementById("otherAllowancesTable");
       table.hidden = !table.hidden;
-      toggleBtn.textContent = `${table.hidden ? "Show" : "Hide"} ${ALLOWANCES.other.length} other allowance(s) for this award`;
+      toggleBtn.textContent = `${table.hidden ? "Show" : "Hide"} ${otherCount} other allowance(s) for this award`;
     });
   }
 }
@@ -430,6 +514,14 @@ function collectAllowances() {
       selections.push({ allowance: a.allowance, quantity, appliesToCategory: sel ? sel.value : undefined });
     }
   });
+  // Hours typed against a penalty row in the roster table: the server attaches them to the base category
+  // and shows them as their own hourly rate line.
+  if (!shiftModeActive()) {
+    document.querySelectorAll(".penalty-hours").forEach((input) => {
+      const quantity = parseFloat(input.value);
+      if (quantity > 0) selections.push({ allowance: input.dataset.allowance, quantity, appliesToCategory: input.dataset.base });
+    });
+  }
   return selections;
 }
 
@@ -442,13 +534,26 @@ function collectRoster() {
       roster.push({ penaltyDescription: cat.penalty_description, hours });
     }
   });
+  // Penalty-row hours are worked on top of the base category's own row: the base category carries
+  // plain + penalty hours, and the penalty allowance moves its share onto the penalty line.
+  document.querySelectorAll(".penalty-hours").forEach((input) => {
+    const hours = parseFloat(input.value);
+    if (!(hours > 0)) return;
+    const existing = roster.find((r) => r.penaltyDescription === input.dataset.base);
+    if (existing) existing.hours += hours;
+    else roster.push({ penaltyDescription: input.dataset.base, hours });
+  });
   return roster;
 }
 
 // ---------- shift calculator ----------
 // Awards the shift engine covers (worker/rosterEngine.js) with their default
 // daily ordinary-hours cap and the hours after which a meal break is required.
-const SHIFT_AWARDS = { MA000004: { cap: 9, meal: 5, retail: true }, MA000009: { cap: 12, meal: 6 }, MA000084: { cap: 8, meal: 5 } };
+const SHIFT_AWARDS = {
+  MA000004: { cap: 9, meal: 5, minEng: 3, retail: true },
+  MA000009: { cap: 12, meal: 6, minEng: 2 },
+  MA000084: { cap: 8, meal: 5, minEng: 4 },
+};
 const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -507,13 +612,17 @@ function updateModeUI() {
   const useShifts = avail && entryMode() === "shifts";
   $("shiftSection").hidden = !useShifts;
   $("rosterSection").hidden = useShifts;
-  if (avail) {
-    if ($("dailyCap").dataset.award !== SELECTED_AWARD.award_code) {
-      $("dailyCap").value = cfg.cap;
-      $("dailyCap").dataset.award = SELECTED_AWARD.award_code;
-    }
-    $("retailOptions").hidden = !cfg.retail;
+  // Quote terms: pre-filled from the award data the shift calculator knows; other awards start blank.
+  const awardKey = SELECTED_AWARD ? SELECTED_AWARD.award_code : "";
+  if ($("dailyCap").dataset.award !== awardKey) {
+    $("dailyCap").value = cfg ? cfg.cap : "";
+    $("minEngagement").value = cfg ? cfg.minEng : "";
+    $("dailyCap").dataset.award = awardKey;
   }
+  $("termsNote").textContent = useShifts
+    ? "Used by the shift calculator and shown on the quote. Pre-filled with the award's figures; change them if your agreement differs."
+    : "Shown on the quote as terms (the hours you enter above aren't recalculated from these).";
+  if (avail) $("retailOptions").hidden = !cfg.retail;
 }
 
 function invalidateShiftResult() {
@@ -617,6 +726,7 @@ function shiftPayloadParts() {
     publicHolidays: DAY_SHORT.map((_, i) => i).filter((i) => $(`phChk${i}`).checked),
     shiftOptions: {
       dailyCapHours: parseFloat($("dailyCap").value) || undefined,
+      minEngagementHours: optNum("minEngagement"),
       shiftworker: $("optShiftworker").checked,
       lateTrading: $("optLateTrading").checked,
     },
@@ -675,7 +785,13 @@ function renderShiftResult() {
         )
         .join("")}</tbody>
     </table>
-    ${r.addOns.length ? `<p class="small muted">Added automatically from the shifts: ${r.addOns.map((a) => `${a.quantity}h ${esc(a.allowance)}`).join("; ")}.</p>` : ""}
+    ${
+      r.addOns.length
+        ? `<p class="small muted">Within the ordinary hours above: ${r.addOns
+            .map((a) => `${a.quantity}h at ${esc(penaltyRowLabel(a.appliesToCategory, a.allowance))}${a.amount != null ? ` (+${money(a.amount)}/hr)` : ""}`)
+            .join("; ")}. The quote shows these as their own hourly rate lines.</p>`
+        : ""
+    }
     <details class="small muted" style="margin-top:6px"><summary>Assumptions used</summary><ul style="margin:6px 0 0 18px;padding:0">${r.assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></details>
   `;
   document.querySelectorAll(".shift-line-hours").forEach((inp) => {
@@ -703,7 +819,7 @@ function wireShiftEvents() {
     renderStaffBlocks();
   });
   $("workOutBtn").addEventListener("click", workOutHours);
-  ["dailyCap", "optShiftworker", "optLateTrading"].forEach((id) => $(id).addEventListener("change", invalidateShiftResult));
+  ["dailyCap", "minEngagement", "optShiftworker", "optLateTrading"].forEach((id) => $(id).addEventListener("change", invalidateShiftResult));
 
   const blocks = $("staffBlocks");
   const staffOf = (el) => STAFF[Number(el.dataset.si)];
@@ -811,6 +927,8 @@ async function calculate() {
     marginPct: parseFloat($("marginPct").value),
     roster,
     allowances: collectAllowances(),
+    minEngagementHours: optNum("minEngagement"),
+    dailyOtHours: optNum("dailyCap"),
     ...(shiftMode ? shiftPayloadParts() : {}),
   };
   try {
@@ -821,6 +939,15 @@ async function calculate() {
     $("breakdown").innerHTML = `<div class="notice error">${e.message}</div>`;
     $("saveBtn").disabled = true;
   }
+}
+
+// "Terms: minimum engagement 3 hours per shift; overtime applies after 9 ordinary hours in a day."
+function termsLine(t) {
+  if (!t) return "";
+  const parts = [];
+  if (t.minEngagementHours != null) parts.push(t.minEngagementHours > 0 ? `minimum engagement ${t.minEngagementHours} hours per shift` : "no minimum engagement");
+  if (t.dailyOtHours != null) parts.push(`overtime applies after ${t.dailyOtHours} ordinary hours in a day`);
+  return parts.length ? `<p class="small mt-8"><strong>Terms:</strong> ${parts.join("; ")}.</p>` : "";
 }
 
 function renderBreakdown(b) {
@@ -846,6 +973,7 @@ function renderBreakdown(b) {
         b.lines.reduce((s, l) => s + l.chargeLineTotal, 0) + (b.allowanceLines || []).reduce((s, l) => s + l.chargeLineTotal, 0)
       )}</div>
     </div>
+    ${termsLine(b.terms)}
     <div class="small muted mt-8">
       Weighted average across this roster (reference only — not what's charged): award ${money(b.blendedAwardRate)}/hr →
       cost ${money(b.costRate)}/hr (+${b.oncostPct}% on-costs) → charge ${money(b.chargeRate)}/hr (+${b.marginPct}% margin)
@@ -890,6 +1018,8 @@ async function saveQuote() {
     marginPct: parseFloat($("marginPct").value),
     roster,
     allowances: collectAllowances(),
+    minEngagementHours: optNum("minEngagement"),
+    dailyOtHours: optNum("dailyCap"),
     notes: $("notes").value.trim(),
     ...(shiftMode ? shiftPayloadParts() : {}),
   };

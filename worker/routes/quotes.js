@@ -6,6 +6,9 @@ import { getRateCategories } from "../rates.js";
 import { getAllowanceRows } from "../allowances.js";
 import { getSettings } from "../settings.js";
 import { costShifts, isSupported } from "../rosterEngine.js";
+import { foldHourlyPenalties } from "../penalties.js";
+
+const numOrNull = (v) => (v === undefined || v === null || v === "" || isNaN(Number(v)) || Number(v) < 0 ? null : Number(v));
 
 // Base (permanent) hourly rate in cents for a classification -- the engine
 // derives every casual percentage from this.
@@ -135,7 +138,10 @@ export async function handleQuotes(request, env, url) {
     if (!hasShiftInput(body)) return error("Add at least one shift");
     try {
       const r = await runShiftEngine(env, body);
-      return json({ lines: r.lines, staffDetails: r.staffDetails, addOns: r.addOns, warnings: r.warnings, assumptions: r.assumptions });
+      // The penalty $/hr, so the screen can show what each add-on adds to the hourly rate.
+      const amounts = new Map((await getAllowanceRows(env, body.awardCode)).map((a) => [a.allowance, a.allowance_amount]));
+      const addOns = r.addOns.map((a) => ({ ...a, amount: amounts.get(a.allowance) ?? null }));
+      return json({ lines: r.lines, staffDetails: r.staffDetails, addOns, warnings: r.warnings, assumptions: r.assumptions });
     } catch (e) {
       return error(e.message, 400);
     }
@@ -156,8 +162,9 @@ export async function handleQuotes(request, env, url) {
       `INSERT INTO quotes (
          staff_id, client_name, role_title, award_code, award_name, base_pay_rate_id, classification_name,
          employee_rate_type_code, is_casual, casual_loading_pct, casual_rate_source, oncost_pct, margin_pct, roster_json,
-         allowances_json, shifts_json, blended_award_rate, cost_rate, charge_rate, notes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
+         allowances_json, shifts_json, blended_award_rate, cost_rate, charge_rate, notes,
+         min_engagement_hours, daily_ot_hours
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
     )
       .bind(
         staff.id,
@@ -179,7 +186,9 @@ export async function handleQuotes(request, env, url) {
         result.blendedAwardRate,
         result.costRate,
         result.chargeRate,
-        body.notes || null
+        body.notes || null,
+        result.terms.minEngagementHours,
+        result.terms.dailyOtHours
       )
       .first();
     return json(quoteRow(row), 201);
@@ -285,7 +294,7 @@ async function computeQuote(request, env) {
 
   let costAndCharge;
   try {
-    costAndCharge = applyOncostAndMargin(withAllowances.blendedAwardRate, oncostPct, marginPct, settings.oncostFloorPct);
+    costAndCharge = applyOncostAndMargin(withAllowances.blendedAwardRate, oncostPct, marginPct, settings.oncostFloorPct, settings.marginFloorPct);
   } catch (e) {
     return error(e.message, 400);
   }
@@ -298,12 +307,24 @@ async function computeQuote(request, env) {
     ? "award_table"
     : "loading_fallback";
 
+  // Hourly penalties (e.g. Hospitality 7pm-midnight) become hourly rate lines (base rate + penalty) rather than
+  // allowances; totals are unchanged.
+  const folded = foldHourlyPenalties(blended.lines, withAllowances.lines);
+
+  // Terms shown on the quote: minimum engagement per shift and ordinary hours per day before overtime.
+  const so = body.shiftOptions || {};
+  const terms = {
+    minEngagementHours: numOrNull(body.minEngagementHours ?? so.minEngagementHours),
+    dailyOtHours: numOrNull(body.dailyOtHours ?? so.dailyCapHours),
+  };
+
   const result = {
     shiftPlan,
+    terms,
     // Per-category charge rate: what the client is actually invoiced for each
     // category -- exactly what the staff member earns there, plus on-costs/margin.
-    lines: addChargeRates(blended.lines, oncostPct, marginPct, "loadedRate", "hours"),
-    allowanceLines: addChargeRates(withAllowances.lines, oncostPct, marginPct, "amount", "quantity"),
+    lines: addChargeRates(folded.lines, oncostPct, marginPct, "loadedRate", "hours"),
+    allowanceLines: addChargeRates(folded.allowanceLines, oncostPct, marginPct, "amount", "quantity"),
     totalHours: blended.totalHours,
     totalPay: withAllowances.totalPay,
     // Weighted average across the roster -- a reference figure only. The

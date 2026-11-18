@@ -241,10 +241,14 @@ export async function handleStaffAuth(request, env, url) {
       if (Number(body.oncostFloorPct) < 0) return error("On-cost floor % can't be negative");
       await setSetting(env, "oncost_floor_pct", Number(body.oncostFloorPct));
     }
-    if (body.defaultMarginPct != null) {
-      if (Number(body.defaultMarginPct) < 0) return error("Default margin % can't be negative");
-      await setSetting(env, "default_margin_pct", Number(body.defaultMarginPct));
-    }
+    const current = await getSettings(env);
+    const floor = body.marginFloorPct != null ? Number(body.marginFloorPct) : current.marginFloorPct;
+    const dflt = body.defaultMarginPct != null ? Number(body.defaultMarginPct) : current.defaultMarginPct;
+    if (body.marginFloorPct != null && !(floor >= 0)) return error("Margin floor % can't be negative");
+    if (body.defaultMarginPct != null && dflt < 0) return error("Default margin % can't be negative");
+    if (dflt < floor) return error(`The default margin (${dflt}%) can't be below the margin floor (${floor}%)`);
+    if (body.defaultMarginPct != null) await setSetting(env, "default_margin_pct", dflt);
+    if (body.marginFloorPct != null) await setSetting(env, "margin_floor_pct", floor);
     return json(await getSettings(env));
   }
 

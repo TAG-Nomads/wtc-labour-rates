@@ -79,6 +79,13 @@
       : q.shifts.shifts && q.shifts.shifts.length
       ? [{ name: null, count: 1, shifts: q.shifts.shifts }]
       : [];
+    // Terms the staff member entered: shown on both the client and the internal copy.
+    const termParts = [];
+    if (q.min_engagement_hours != null) termParts.push(q.min_engagement_hours > 0 ? `Minimum engagement: ${q.min_engagement_hours} hours per shift` : "No minimum engagement");
+    if (q.daily_ot_hours != null) termParts.push(`Overtime applies after ${q.daily_ot_hours} ordinary hours in a day`);
+    const termsHtml = termParts.length
+      ? `<p style="font-size:0.88rem;margin:0 0 10px"><strong>Terms:</strong> ${termParts.join(". ")}.</p>`
+      : "";
     const total =
       q.roster.reduce((s, l) => s + l.chargeLineTotal, 0) + (q.allowances || []).reduce((s, l) => s + l.chargeLineTotal, 0);
     document.getElementById("content").innerHTML = `
@@ -149,6 +156,7 @@
           ? `<p class="small" style="color:#666">Weighted average (reference only): award ${money(q.blended_award_rate)}/hr → cost ${money(q.cost_rate)}/hr (+${q.oncost_pct}% on-costs) → charge ${money(q.charge_rate)}/hr (+${q.margin_pct}% margin)</p>`
           : ""
       }
+      ${termsHtml}
       <p class="small" style="color:#666">All rates are exclusive of GST. GST is charged in addition on invoicing.</p>
       ${internal && q.notes ? `<p><strong>Internal notes:</strong> ${q.notes}</p>` : ""}
     `;
