@@ -1027,7 +1027,7 @@ async function loadHistory() {
   const quotes = await api("/api/staff/quotes");
   $("history").innerHTML = quotes.length
     ? `<table>
-        <thead><tr><th>Date</th><th>Client</th><th>Role</th><th>Award</th><th class="num">Charge rate (excl. GST)</th><th>By</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Client</th><th>Role</th><th>Award</th><th class="num">Charge rate (excl. GST)</th><th>By</th><th>Client sign-off</th><th></th></tr></thead>
         <tbody>
           ${quotes.map(
             (q) => `<tr>
@@ -1037,12 +1037,62 @@ async function loadHistory() {
               <td>${q.award_name}</td>
               <td class="num">${money(q.charge_rate)}/hr</td>
               <td>${q.staff_name}</td>
+              <td>${
+                q.accepted_at
+                  ? `<span class="pill" style="color:var(--green,#2e9e5b);border-color:var(--green,#2e9e5b)">Accepted</span> <span class="small muted">${esc(q.accepted_name)}, ${new Date(q.accepted_at).toLocaleDateString()}</span>`
+                  : `<button type="button" class="link signoff-btn" data-id="${q.id}">${q.shared_at ? "Resend link" : "Send for sign-off"}</button>${q.shared_at ? ` <span class="small muted">link made ${new Date(q.shared_at).toLocaleDateString()}</span>` : ""}`
+              }</td>
               <td><a href="/quote-print.html?id=${q.id}" target="_blank">Client quote</a> · <a href="/quote-print.html?id=${q.id}&internal=1" target="_blank">Internal</a></td>
             </tr>`
           ).join("")}
         </tbody>
       </table>`
     : `<p class="muted small">No quotes saved yet.</p>`;
+  document.querySelectorAll(".signoff-btn").forEach((btn) =>
+    btn.addEventListener("click", () => openShareBox(quotes.find((q) => q.id === Number(btn.dataset.id)), false))
+  );
+}
+
+// Client sign-off: make the quote's link and let the staff member send it from their own Gmail / Outlook / mail app.
+async function openShareBox(q, regenerate) {
+  let link;
+  try {
+    link = await api(`/api/staff/quotes/${q.id}/share`, { method: "POST", body: JSON.stringify({ regenerate }) });
+  } catch (e) {
+    $("shareBox").innerHTML = `<div class="notice error mt-8">${esc(e.message)}</div>`;
+    return;
+  }
+  const subject = `Labour hire rates for ${q.client_name} - please review and accept`;
+  const body =
+    `Hi,\n\nHere are the proposed labour hire rates for ${q.client_name}. You can review them and accept online here:\n\n${link.url}\n\n` +
+    `If anything needs changing, just reply to this email.\n\nCheers,\n${ME.name}\nWork + Travel Co.`;
+  const enc = encodeURIComponent;
+  $("shareBox").innerHTML = `<div class="notice mt-8">
+    <strong>Sign-off link for ${esc(q.client_name)}</strong>
+    <p class="small" style="margin:6px 0">Send this from your own email so it comes from you. The client sees our charge rates only, and accepts once with their name.</p>
+    <input type="text" id="shareLink" readonly value="${esc(link.url)}" style="width:100%">
+    <div class="row mt-8" style="gap:10px">
+      <a class="button" target="_blank" rel="noopener" href="https://mail.google.com/mail/?view=cm&fs=1&su=${enc(subject)}&body=${enc(body)}">Write in Gmail</a>
+      <a class="button" target="_blank" rel="noopener" href="https://outlook.office.com/mail/deeplink/compose?subject=${enc(subject)}&body=${enc(body)}">Write in Outlook</a>
+      <a class="button" href="mailto:?subject=${enc(subject)}&body=${enc(body)}">Open my mail app</a>
+      <button type="button" id="copyShareLink">Copy link</button>
+      <button type="button" class="link" id="newShareLink">Make a new link (the old one stops working)</button>
+    </div>
+    <div id="shareCopied" class="small muted mt-8"></div>
+  </div>`;
+  $("copyShareLink").addEventListener("click", async () => {
+    $("shareLink").select();
+    try {
+      await navigator.clipboard.writeText(link.url);
+      $("shareCopied").textContent = "Link copied.";
+    } catch {
+      $("shareCopied").textContent = "Press Ctrl+C to copy the selected link.";
+    }
+  });
+  $("newShareLink").addEventListener("click", () => {
+    if (confirm("The previous link will stop working. Make a new one?")) openShareBox(q, true);
+  });
+  loadHistory();
 }
 
 async function loadAccounts() {

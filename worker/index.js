@@ -3,6 +3,7 @@ import { handleAwards } from "./routes/awards.js";
 import { handleQuotes } from "./routes/quotes.js";
 import { handleFwcWebhook } from "./routes/fwcWebhook.js";
 import { handleDataChanges } from "./routes/dataChanges.js";
+import { handleClientQuote } from "./routes/clientQuote.js";
 
 export default {
   async fetch(request, env) {
@@ -23,6 +24,10 @@ export default {
 
     if (pathname.startsWith("/api/webhooks/fwc")) {
       return handleFwcWebhook(request, env, url);
+    }
+
+    if (pathname.startsWith("/api/client-quote/")) {
+      return handleClientQuote(request, env, url);
     }
 
     if (pathname.startsWith("/api/staff/data-changes")) {

@@ -44,18 +44,24 @@
 <script>
   const params = new URLSearchParams(location.search);
   const id = params.get("id");
+  // ?t=<token> is the client's sign-off link: no login, client-safe data only, with the accept form.
+  const token = params.get("t");
   // Default is the client-facing quote: our charge rates only. ?internal=1 shows
   // the full build-up (award rates, on-costs, margin) for staff -- never send that one.
-  const internal = params.get("internal") === "1";
+  const internal = !token && params.get("internal") === "1";
   const money = (n) => `$${Number(n).toFixed(2)}`;
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   document.getElementById("footerText").textContent = internal
     ? "INTERNAL COPY — contains award rates, on-costs and margin. Do not send to the client. Indicative build-up only, calculated from the Fair Work Modern Award rates in force at the time of calculation; the award is the controlling legal instrument."
     : "Rates are indicative, based on current award conditions, and exclusive of GST. Final charges are based on hours actually worked and the award conditions that apply to those hours.";
 
-  fetch(`/api/staff/quotes/${id}`).then(async (res) => {
-    if (res.status === 401) { location.href = "/login.html"; return; }
-    if (!res.ok) { document.getElementById("content").textContent = "Quote not found."; return; }
+  fetch(token ? `/api/client-quote/${encodeURIComponent(token)}` : `/api/staff/quotes/${id}`).then(async (res) => {
+    if (res.status === 401 && !token) { location.href = "/login.html"; return; }
+    if (!res.ok) {
+      const msg = token ? (await res.json().catch(() => ({}))).error : "";
+      document.getElementById("content").textContent = msg || "Quote not found.";
+      return;
+    }
     const q = await res.json();
     const dateStr = new Date(q.created_at + "Z").toISOString().slice(0, 10);
     document.title = `WTC Quote - ${q.client_name} - ${dateStr} - ${q.id}`;
@@ -85,6 +91,22 @@
     if (q.daily_ot_hours != null) termParts.push(`Overtime applies after ${q.daily_ot_hours} ordinary hours in a day`);
     const termsHtml = termParts.length
       ? `<p style="font-size:0.88rem;margin:0 0 10px"><strong>Terms:</strong> ${termParts.join(". ")}.</p>`
+      : "";
+    // Sign-off block: the accepted record (staff and client copies), or the accept form on the client's link.
+    const acceptedHtml = () =>
+      `<div style="border:2px solid #1f7a3d;background:#eef8f1;padding:10px 12px;margin:14px 0;font-size:0.9rem"><strong>Accepted</strong> by ${esc(q.accepted_name)} on ${new Date(q.accepted_at).toLocaleString()}.</div>`;
+    const acceptHtml = q.accepted_at
+      ? acceptedHtml()
+      : token
+      ? `<div class="no-print" style="border:2px solid #1a1a1a;padding:12px 14px;margin:14px 0">
+           <strong>Accept this quote</strong>
+           <p style="font-size:0.85rem;margin:6px 0">By accepting you confirm these rates, hours and terms for ${esc(q.client_name)}. Rates are exclusive of GST.</p>
+           <label style="display:block;font-size:0.85rem;margin:8px 0 2px">Your full name</label>
+           <input id="accName" maxlength="100" style="width:100%;max-width:320px;padding:6px">
+           <label style="display:block;font-size:0.85rem;margin:8px 0"><input type="checkbox" id="accAgree"> I'm authorised to accept this quote on behalf of ${esc(q.client_name)}</label>
+           <button id="accBtn" style="padding:8px 16px;font-weight:700">Accept quote</button>
+           <div id="accMsg" style="color:#b00020;font-size:0.85rem;margin-top:6px"></div>
+         </div>`
       : "";
     const total =
       q.roster.reduce((s, l) => s + l.chargeLineTotal, 0) + (q.allowances || []).reduce((s, l) => s + l.chargeLineTotal, 0);
@@ -158,8 +180,31 @@
       }
       ${termsHtml}
       <p class="small" style="color:#666">All rates are exclusive of GST. GST is charged in addition on invoicing.</p>
+      <div id="acceptBox">${acceptHtml}</div>
       ${internal && q.notes ? `<p><strong>Internal notes:</strong> ${q.notes}</p>` : ""}
     `;
+    const btn = document.getElementById("accBtn");
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        const msg = document.getElementById("accMsg");
+        msg.textContent = "";
+        btn.disabled = true;
+        const r = await fetch(`/api/client-quote/${encodeURIComponent(token)}/accept`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: document.getElementById("accName").value, agree: document.getElementById("accAgree").checked }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          q.accepted_at = d.accepted_at;
+          q.accepted_name = d.accepted_name;
+          document.getElementById("acceptBox").innerHTML = acceptedHtml();
+        } else {
+          msg.textContent = d.error || "Something went wrong - please try again.";
+          btn.disabled = false;
+        }
+      });
+    }
   });
 </script>
 </body>

@@ -115,7 +115,7 @@ function withCharge(lines, rateKey, qtyKey, row) {
   });
 }
 
-function quoteRow(row) {
+export function quoteRow(row) {
   return {
     ...row,
     roster: withCharge(JSON.parse(row.roster_json), "loadedRate", "hours", row),
@@ -202,7 +202,24 @@ export async function handleQuotes(request, env, url) {
     return json(rows.results.map(quoteRow));
   }
 
-  let m = match("/api/staff/quotes/:id", pathname);
+  // Create (or re-issue) the client sign-off link for a quote. The staff member sends it from their own mail.
+  // Once the client has accepted, the link is fixed: it can't be replaced.
+  let m = match("/api/staff/quotes/:id/share", pathname);
+  if (m && method === "POST") {
+    const row = await env.DB.prepare("SELECT id, share_token, accepted_at FROM quotes WHERE id = ?").bind(m.id).first();
+    if (!row) return error("Not found", 404);
+    const body = await request.json().catch(() => ({}));
+    let token = row.share_token;
+    if (row.accepted_at && body.regenerate) return error("This quote has already been accepted, so its link can't be replaced.", 409);
+    if (!token || body.regenerate) {
+      const bytes = crypto.getRandomValues(new Uint8Array(24));
+      token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      await env.DB.prepare("UPDATE quotes SET share_token = ?, shared_at = ? WHERE id = ?").bind(token, new Date().toISOString(), m.id).run();
+    }
+    return json({ token, url: `${url.origin}/quote-print.html?t=${token}` });
+  }
+
+  m = match("/api/staff/quotes/:id", pathname);
   if (m && method === "GET") {
     const row = await env.DB.prepare(
       `SELECT q.*, s.name AS staff_name FROM quotes q

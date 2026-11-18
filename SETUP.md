@@ -107,3 +107,16 @@ clause description), and a new award has no casual-loading entry until added to 
 Tom plans to supply a labour hire agreement template that should get the role,
 pay rates, and charge rate built into a document sent back to the client/supplier.
 Not built yet — flagged here for the next round of work.
+
+## Client sign-off
+
+Each saved quote can be sent to the client for acceptance (Quote history -> **Send for sign-off**):
+
+- The tool makes an unguessable link (`/quote-print.html?t=<token>`) and gives the staff member buttons to write the email in
+  **their own** Gmail / Outlook (web) / default mail app, so it's sent from their mailbox. The tool does not send email itself
+  (sending as a staff member from the Worker would need per-person OAuth or a verified sending domain).
+- The link needs no login. It serves a client-safe copy (`worker/routes/clientQuote.js`): charge rates only, no award rates, on-costs,
+  margin, split, warnings or internal notes. The client enters their name, ticks "I'm authorised", and accepts **once**.
+- On acceptance the quote records the time, name, IP, user agent and a SHA-256 of the priced content (`accepted_hash`), and the history shows
+  "Accepted". Quotes are immutable once saved, so what was accepted can't change. A new link can be made until acceptance, never after.
+- This is click-to-accept evidence, not a certified e-signature. Migration 0010.
