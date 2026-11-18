@@ -89,6 +89,7 @@
     const termParts = [];
     if (q.min_engagement_hours != null) termParts.push(q.min_engagement_hours > 0 ? `Minimum engagement: ${q.min_engagement_hours} hours per shift` : "No minimum engagement");
     if (q.daily_ot_hours != null) termParts.push(`Overtime applies after ${q.daily_ot_hours} ordinary hours in a day`);
+    if (q.shift_length_note) termParts.push(esc(q.shift_length_note).replace(/\.$/, ""));
     const termsHtml = termParts.length
       ? `<p style="font-size:0.88rem;margin:0 0 10px"><strong>Terms:</strong> ${termParts.join(". ")}.</p>`
       : "";
@@ -113,11 +114,11 @@
     document.getElementById("content").innerHTML = `
       ${internal ? '<p style="background:#fff3cd;border:1px solid #e0b400;padding:8px 10px;font-weight:700">INTERNAL COPY — shows award rates, on-costs and margin. Do not send to the client.</p>' : ""}
       <div class="meta-grid">
-        <div><span class="k">Employer / client:</span> ${q.client_name}</div>
-        <div><span class="k">Role:</span> ${q.role_title || "—"}</div>
-        <div><span class="k">Classification:</span> ${q.classification_name}</div>
+        <div><span class="k">Employer / client:</span> ${esc(q.client_name)}</div>
+        <div><span class="k">Role:</span> ${esc(q.role_title) || "—"}</div>
+        <div><span class="k">Classification:</span> ${esc(q.classification_name)}</div>
         <div><span class="k">Engagement:</span> ${q.is_casual ? "Casual" : "Permanent"}</div>
-        <div><span class="k">Prepared by:</span> ${q.staff_name}</div>
+        <div><span class="k">Prepared by:</span> ${esc(q.staff_name)}</div>
         ${internal ? `<div><span class="k">Award:</span> ${q.award_name} (${q.award_code})</div><div><span class="k">Casual rate source:</span> ${casualSource}</div>` : ""}
       </div>
       ${

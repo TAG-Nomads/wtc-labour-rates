@@ -13,7 +13,7 @@ async function sha256Hex(text) {
 // Fingerprint of what the client was shown and agreed to.
 export const quoteFingerprint = (row) =>
   sha256Hex(
-    JSON.stringify([row.id, row.client_name, row.roster_json, row.allowances_json, row.shifts_json, row.min_engagement_hours, row.daily_ot_hours])
+    JSON.stringify([row.id, row.client_name, row.roster_json, row.allowances_json, row.shifts_json, row.min_engagement_hours, row.daily_ot_hours, row.shift_length_note])
   );
 
 function clientSafe(row) {
@@ -52,6 +52,7 @@ function clientSafe(row) {
     shifts,
     min_engagement_hours: q.min_engagement_hours,
     daily_ot_hours: q.daily_ot_hours,
+    shift_length_note: q.shift_length_note,
     accepted_at: q.accepted_at,
     accepted_name: q.accepted_name,
   };

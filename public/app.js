@@ -537,12 +537,36 @@ function collectRoster() {
 }
 
 // ---------- shift calculator ----------
-// Awards the shift engine covers (worker/rosterEngine.js) with their default
-// daily ordinary-hours cap and the hours after which a meal break is required.
+// Awards the shift engine covers (worker/rosterEngine.js) with the hours after which a
+// meal break is required. (Daily-hours and minimum-engagement defaults are in AWARD_TERMS.)
 const SHIFT_AWARDS = {
-  MA000004: { cap: 9, meal: 5, minEng: 3, retail: true },
-  MA000009: { cap: 12, meal: 6, minEng: 2 },
-  MA000084: { cap: 8, meal: 5, minEng: 4 },
+  MA000004: { meal: 5, retail: true },
+  MA000009: { meal: 6 },
+  MA000084: { meal: 5 },
+};
+// Quote terms pre-filled per award, checked against the award text (clauses are in the note). Awards not listed start
+// blank and the staff member can type their own.
+const AWARD_TERMS = {
+  MA000004: {
+    minEng: 3,
+    cap: 9,
+    note: "Ordinary hours are limited to 9 per day (up to 11 on one day a week); hours beyond are overtime (General Retail Industry Award cl 15.4 and 15.5).",
+  },
+  MA000009: {
+    minEng: 2,
+    cap: 12,
+    note: "A casual can be engaged for a maximum of 12 hours per day or shift; hours beyond are overtime (Hospitality Industry (General) Award cl 11.2 and 11.4).",
+  },
+  MA000084: {
+    minEng: 4,
+    cap: 8,
+    note: "Ordinary hours are limited to 8 per day (up to 10 by agreement); hours beyond are overtime (Storage Services and Wholesale Award cl 13.1 and 20.3).",
+  },
+  MA000104: {
+    minEng: 2,
+    cap: 10,
+    note: "Ordinary hours are limited to 10 per day or shift (up to 12 by agreement); hours beyond are overtime (Miscellaneous Award cl 13.5).",
+  },
 };
 const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -605,8 +629,10 @@ function updateModeUI() {
   // Quote terms: pre-filled from the award data the shift calculator knows; other awards start blank.
   const awardKey = SELECTED_AWARD ? SELECTED_AWARD.award_code : "";
   if ($("dailyCap").dataset.award !== awardKey) {
-    $("dailyCap").value = cfg ? cfg.cap : "";
-    $("minEngagement").value = cfg ? cfg.minEng : "";
+    const t = AWARD_TERMS[awardKey];
+    $("dailyCap").value = t ? t.cap : "";
+    $("minEngagement").value = t ? t.minEng : "";
+    $("shiftLengthNote").value = t ? t.note : "";
     $("dailyCap").dataset.award = awardKey;
   }
   $("termsNote").textContent = useShifts
@@ -919,6 +945,7 @@ async function calculate() {
     allowances: collectAllowances(),
     minEngagementHours: optNum("minEngagement"),
     dailyOtHours: optNum("dailyCap"),
+    shiftLengthNote: $("shiftLengthNote").value.trim() || undefined,
     ...(shiftMode ? shiftPayloadParts() : {}),
   };
   try {
@@ -937,7 +964,8 @@ function termsLine(t) {
   const parts = [];
   if (t.minEngagementHours != null) parts.push(t.minEngagementHours > 0 ? `minimum engagement ${t.minEngagementHours} hours per shift` : "no minimum engagement");
   if (t.dailyOtHours != null) parts.push(`overtime applies after ${t.dailyOtHours} ordinary hours in a day`);
-  return parts.length ? `<p class="small mt-8"><strong>Terms:</strong> ${parts.join("; ")}.</p>` : "";
+  const note = t.shiftLengthNote ? `<br>${esc(t.shiftLengthNote)}` : "";
+  return parts.length || note ? `<p class="small mt-8"><strong>Terms:</strong> ${parts.join("; ")}${parts.length ? "." : ""}${note}</p>` : "";
 }
 
 function renderBreakdown(b) {
@@ -1010,6 +1038,7 @@ async function saveQuote() {
     allowances: collectAllowances(),
     minEngagementHours: optNum("minEngagement"),
     dailyOtHours: optNum("dailyCap"),
+    shiftLengthNote: $("shiftLengthNote").value.trim() || undefined,
     notes: $("notes").value.trim(),
     ...(shiftMode ? shiftPayloadParts() : {}),
   };
@@ -1032,11 +1061,11 @@ async function loadHistory() {
           ${quotes.map(
             (q) => `<tr>
               <td>${new Date(q.created_at + "Z").toLocaleDateString()}</td>
-              <td>${q.client_name}</td>
-              <td>${q.role_title || ""}</td>
-              <td>${q.award_name}</td>
+              <td>${esc(q.client_name)}</td>
+              <td>${esc(q.role_title || "")}</td>
+              <td>${esc(q.award_name)}</td>
               <td class="num">${money(q.charge_rate)}/hr</td>
-              <td>${q.staff_name}</td>
+              <td>${esc(q.staff_name)}</td>
               <td>${
                 q.accepted_at
                   ? `<span class="pill" style="color:var(--green,#2e9e5b);border-color:var(--green,#2e9e5b)">Accepted</span> <span class="small muted">${esc(q.accepted_name)}, ${new Date(q.accepted_at).toLocaleDateString()}</span>`

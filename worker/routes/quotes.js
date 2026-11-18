@@ -163,8 +163,8 @@ export async function handleQuotes(request, env, url) {
          staff_id, client_name, role_title, award_code, award_name, base_pay_rate_id, classification_name,
          employee_rate_type_code, is_casual, casual_loading_pct, casual_rate_source, oncost_pct, margin_pct, roster_json,
          allowances_json, shifts_json, blended_award_rate, cost_rate, charge_rate, notes,
-         min_engagement_hours, daily_ot_hours
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
+         min_engagement_hours, daily_ot_hours, shift_length_note
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`
     )
       .bind(
         staff.id,
@@ -188,7 +188,8 @@ export async function handleQuotes(request, env, url) {
         result.chargeRate,
         body.notes || null,
         result.terms.minEngagementHours,
-        result.terms.dailyOtHours
+        result.terms.dailyOtHours,
+        result.terms.shiftLengthNote
       )
       .first();
     return json(quoteRow(row), 201);
@@ -333,6 +334,7 @@ async function computeQuote(request, env) {
   const terms = {
     minEngagementHours: numOrNull(body.minEngagementHours ?? so.minEngagementHours),
     dailyOtHours: numOrNull(body.dailyOtHours ?? so.dailyCapHours),
+    shiftLengthNote: String(body.shiftLengthNote || "").trim().slice(0, 300) || null,
   };
 
   const result = {
